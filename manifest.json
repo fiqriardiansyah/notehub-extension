@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Notespacehub",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnjR8QngLzx0EvbIx9XJGxF207FSNvkfoC0+4TiE9O0cVPY5W/GyYAzQj/jKfthnwWxTwTwhyGdmT5I47CHst0JMAn7nBCU8DEnP0In2CrGOn5z5oDSw1J6O9FlL9cgDhxtS2cnGozrVVTUpfEEZvy9xJgX8Hmrh4phfrFieB4cr11SrEt4j7Hx+/VQm8St6Qxj3jpjKpOsE9VNVNHtpubmiZPiK5X17qODM7SIbX7dSyc+aKTBRozXKSQhESbGkZe/a1Wn4TC6qYvGSNqbT//3o67FyDoC63n9UXiWDC7clOkPWjuDXTFMEjlp/JFVtpVBu9mfxQj/iOC+1YkxMzsQIDAQAB",
+  "version": "1.0.0",
+  "description": "NotespaceHub browser extension",
+  "permissions": ["identity", "storage"],
+  "host_permissions": ["https://notespacehub.com/*", "http://127.0.0.0:4173/*", "http://localhost:4173/*", "http://localhost:3000/*"],
+  "background": { "service_worker": "background.js" },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

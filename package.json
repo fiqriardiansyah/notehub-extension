@@ -1,0 +1,21 @@
+{
+  "author": {
+    "email": "fiqriardian92@gmail.com",
+    "name": "Fiqri Ardiansyah"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.0"
+  },
+  "scripts": {
+    "build:css": "tailwindcss -i input.css -o popup.css",
+    "watch:css": "tailwindcss -i input.css -o popup.css --watch"
+  },
+  "dependencies": {
+    "@editorjs/checklist": "^1.6.0",
+    "@editorjs/editorjs": "^2.31.6",
+    "@editorjs/header": "^2.8.9",
+    "@editorjs/list": "^2.0.9",
+    "@editorjs/quote": "^2.7.6",
+    "dompurify": "^3.4.10"
+  }
+}
