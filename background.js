@@ -1,11 +1,11 @@
-const API_BASE = 'http://localhost:3000';
+const API_BASE = 'https://notespacehub.com/api';
 
 async function login() {
   const redirectUri = chrome.identity.getRedirectURL();
   const state = crypto.randomUUID();
 
   const authUrl =
-    `${API_BASE}/api/oauth/authorize` +
+    `${API_BASE}/oauth/authorize` +
     `?redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
 
   const redirect = await chrome.identity.launchWebAuthFlow({
@@ -16,7 +16,7 @@ async function login() {
   const params = new URL(redirect).searchParams;
   if (params.get('state') !== state) throw new Error('state mismatch');
 
-  const res = await fetch(`${API_BASE}/api/oauth/token`, {
+  const res = await fetch(`${API_BASE}/oauth/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code: params.get('code') }),
@@ -40,7 +40,7 @@ async function checkSession() {
   
   if (!access_token) return { authenticated: false };
 
-  const res = await fetch(`${API_BASE}/api/me`, {
+  const res = await fetch(`${API_BASE}/me`, {
     headers: { Authorization: `Bearer ${access_token}` },
   });
 
@@ -77,7 +77,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sendResponse({ success: false, error: 'Not authenticated' });
         return;
       }
-      fetch(`${API_BASE}/api/note/update/${msg.id}`, {
+      fetch(`${API_BASE}/note/update/${msg.id}`, {
         method: 'PUT',
         headers: {
           Authorization: `Bearer ${access_token}`,
@@ -101,7 +101,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sendResponse({ success: false, error: 'Not authenticated' });
         return;
       }
-      fetch(`${API_BASE}/api/note/update/${msg.id}`, {
+      fetch(`${API_BASE}/note/update/${msg.id}`, {
         method: 'PUT',
         headers: {
           Authorization: `Bearer ${access_token}`,
@@ -125,7 +125,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sendResponse({ success: false, error: 'Not authenticated' });
         return;
       }
-      fetch(`${API_BASE}/api/note`, {
+      fetch(`${API_BASE}/note`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${access_token}`,
@@ -150,7 +150,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sendResponse({ success: false, error: 'Not authenticated' });
         return;
       }
-      fetch(`${API_BASE}/api/note/get-all?order=${order}`, {
+      fetch(`${API_BASE}/note/get-all?order=${order}`, {
         headers: { Authorization: `Bearer ${access_token}` },
       })
         .then((r) => {

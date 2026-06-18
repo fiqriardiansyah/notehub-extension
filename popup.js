@@ -1,5 +1,4 @@
-const API_BASE = 'http://localhost:3000';
-const APP_BASE = 'http://localhost:4173';
+const APP_BASE = 'https://notespacehub.com';
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 const viewLoading = document.getElementById('view-loading');
@@ -248,7 +247,7 @@ function buildNoteCard(item) {
   let preview = '';
   if (!folder) {
     if (item.isSecure) {
-      preview = 'Secure note';
+      // preview left empty; lock icon rendered separately
     } else if (item.type === 'todolist') {
       const total = (item.todos || []).length;
       const done = (item.todos || []).filter((t) => t?.isCheck).length;
@@ -286,7 +285,13 @@ function buildNoteCard(item) {
       ${pinIcon}${folderIcon}
       <h3 class="text-[13px] font-semibold text-gray-900 leading-snug line-clamp-2 flex-1 min-w-0">${esc(item.title || 'Untitled')}</h3>
     </div>
-    ${preview ? `<p class="text-[11px] text-gray-500 leading-relaxed line-clamp-3 note-preview"></p>` : ''}
+    ${item.isSecure && !folder
+      ? `<div class="flex items-center justify-center flex-1 py-2">
+           <svg class="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+           </svg>
+         </div>`
+      : preview ? `<p class="text-[11px] text-gray-500 leading-relaxed line-clamp-3 note-preview"></p>` : ''}
     ${tags.length ? `
       <div class="flex flex-wrap gap-x-2 gap-y-0.5">
         ${tags.map((tag) => `
