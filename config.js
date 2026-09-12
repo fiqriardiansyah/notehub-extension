@@ -1,0 +1,14 @@
+// Shared origins for background.js (pulled in via importScripts) and
+// sidepanel.js (loaded ahead of it by sidepanel.html). Both files read these
+// globals instead of declaring their own, so a dev/prod switch is one edit
+// here rather than four scattered string literals.
+//
+// Flip DEV to true to point a locally loaded unpacked extension at a dev
+// server. It ships as false — a released build must talk to production.
+// Both origins are already in manifest.json's host_permissions, which is what
+// lets openOrFocusAppTab() run a url-filtered chrome.tabs.query without the
+// broad "tabs" permission.
+const DEV = true;
+
+const API_BASE = DEV ? 'http://localhost:3000/api' : 'https://notespacehub.com/api';
+const APP_BASE = DEV ? 'http://localhost:4173' : 'https://notespacehub.com';

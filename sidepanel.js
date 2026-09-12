@@ -1,10 +1,20 @@
-const APP_BASE = 'https://notespacehub.com';
+// API_BASE / APP_BASE come from config.js, loaded by sidepanel.html ahead of
+// this file — see that file for the dev switch.
+const MAX_IN_MB = 10;
+const MAX_SIZE_FILE = 1024 * 1024 * MAX_IN_MB; // 10 MB, matches notehub-app's upload limit
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 const viewLoading = document.getElementById('view-loading');
 const viewLoggedOut = document.getElementById('view-logged-out');
 const viewLoggedIn = document.getElementById('view-logged-in');
 const viewNoteDetail = document.getElementById('view-note-detail');
+const viewFolder = document.getElementById('view-folder');
+const folderBackBtn = document.getElementById('folderBackBtn');
+const folderTitle = document.getElementById('folderTitle');
+const folderLoadingEl = document.getElementById('folder-loading');
+const folderEmptyEl = document.getElementById('folder-empty');
+const folderEmptyMsg = document.getElementById('folder-empty-msg');
+const folderGrid = document.getElementById('folder-grid');
 const loginBtn = document.getElementById('loginBtn');
 const logoutBtn = document.getElementById('logoutBtn');
 const loginError = document.getElementById('login-error');
@@ -55,6 +65,27 @@ const todoCreateAddInput = document.getElementById('todoCreateAddInput');
 const appHomeLink = document.getElementById('appHomeLink');
 appHomeLink.href = APP_BASE;
 
+const captureBanner = document.getElementById('captureBanner');
+const captureBannerSpinner = document.getElementById('captureBannerSpinner');
+const captureBannerText = document.getElementById('captureBannerText');
+
+const currentTabJob = document.getElementById('currentTabJob');
+const currentTabHint = document.getElementById('currentTabHint');
+const currentTabTitle = document.getElementById('currentTabTitle');
+const currentTabCompany = document.getElementById('currentTabCompany');
+const currentTabCaptureBtn = document.getElementById('currentTabCaptureBtn');
+const currentTabCaptureLabel = document.getElementById('currentTabCaptureLabel');
+const applicationsLoading = document.getElementById('applications-loading');
+const applicationsEmpty = document.getElementById('applications-empty');
+const applicationsList = document.getElementById('applications-list');
+const applicationsTableWrap = document.getElementById('applications-table-wrap');
+const applicationsTodayCount = document.getElementById('applications-today-count');
+const refreshBtn = document.getElementById('refreshBtn');
+const tabApplicationsBtn = document.getElementById('tabApplicationsBtn');
+const tabNotesBtn = document.getElementById('tabNotesBtn');
+const tabApplications = document.getElementById('tab-applications');
+const tabNotes = document.getElementById('tab-notes');
+
 // ── State ─────────────────────────────────────────────────────────────────────
 let allNotes = [];
 let activeTagId = null;
@@ -65,6 +96,7 @@ let detailEditorInstance = null;
 let createEditorInstance = null;
 let editingTodos = [];
 let creatingTodos = [];
+let activeFolder = null;
 
 // ── Utils ─────────────────────────────────────────────────────────────────────
 function extractText(doc) {
@@ -202,6 +234,20 @@ function requestNotes(order) {
   });
 }
 
+function requestFolder(id, order) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({ action: 'fetchFolder', id, order }, (res) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else if (res && res.success) {
+        resolve(res.data);
+      } else {
+        reject(new Error(res?.error || 'Failed to load folder'));
+      }
+    });
+  });
+}
+
 // ── Rendering ─────────────────────────────────────────────────────────────────
 function collectTags(notes) {
   const map = new Map();
@@ -309,7 +355,7 @@ function buildNoteCard(item) {
 
   el.addEventListener('click', () => {
     if (folder) {
-      chrome.tabs.create({ url: `${APP_BASE}/folder/${item.id}` });
+      showFolderView(item);
     } else {
       showNoteDetail(item);
     }
@@ -376,8 +422,200 @@ function showLoggedIn() {
   viewNoteCreate.style.display = 'none';
   viewTodoCreate.style.display = 'none';
   viewLoggedIn.style.display = 'flex';
+  setActiveTab('applications');
   loadNotes();
+  refreshCurrentJob();
+  loadRecentApplications();
 }
+
+// ── Capture status banner ────────────────────────────────────────────────────
+// Driven by chrome.storage.session (set from background.js's capture()) rather
+// than a runtime message, since a right-click/pill capture can open or race
+// ahead of the panel document — reading storage on init still catches an
+// in-flight capture that the panel missed the start of.
+const CAPTURE_BANNER_STYLE = {
+  capturing: 'bg-gray-900',
+  success: 'bg-green-600',
+  error: 'bg-red-600',
+};
+
+function setCaptureBanner(status, message) {
+  if (!status || status === 'idle') {
+    captureBanner.style.display = 'none';
+    return;
+  }
+  captureBanner.style.display = 'flex';
+  captureBanner.className =
+    `fixed top-0 left-0 right-0 z-50 flex items-center justify-center gap-2 px-4 py-2 text-xs font-medium text-white shadow-sm ${CAPTURE_BANNER_STYLE[status] || CAPTURE_BANNER_STYLE.capturing}`;
+  captureBannerSpinner.style.display = status === 'capturing' ? 'inline-block' : 'none';
+  captureBannerText.textContent = message || '';
+}
+
+function syncCaptureBanner() {
+  chrome.storage.session.get(['captureStatus', 'captureMessage'], (res) => {
+    // Only reflect a still-in-flight capture on (re)load — a stale
+    // success/error from before the panel existed isn't worth surfacing.
+    if (res.captureStatus === 'capturing') setCaptureBanner('capturing', res.captureMessage);
+  });
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'session' || !changes.captureStatus) return;
+  const status = changes.captureStatus.newValue;
+  chrome.storage.session.get('captureMessage', (res) => setCaptureBanner(status, res.captureMessage));
+  if (status === 'success' || status === 'error') {
+    setTimeout(() => {
+      setCaptureBanner('idle');
+      chrome.storage.session.set({ captureStatus: 'idle', captureMessage: '' });
+    }, 3000);
+  }
+});
+
+syncCaptureBanner();
+
+// ── Current tab (capture) ────────────────────────────────────────────────────
+// Reads only the active tab's id (no "tabs" permission needed) and asks the
+// LinkedIn content script whether it has a job; never inspects tab.url itself.
+
+async function refreshCurrentJob() {
+  currentTabJob.style.display = 'none';
+  currentTabHint.style.display = 'none';
+
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab?.id == null) {
+    currentTabHint.style.display = 'block';
+    return;
+  }
+
+  chrome.tabs.sendMessage(tab.id, { action: 'detect' }, (resp) => {
+    if (chrome.runtime.lastError || !resp?.job) {
+      currentTabHint.style.display = 'block';
+      return;
+    }
+    const job = resp.job;
+    currentTabTitle.textContent = job.title || 'Untitled role';
+    currentTabCompany.textContent = job.company || '';
+    currentTabJob.style.display = 'block';
+    // resp.sourceUrl only — the panel never reads tab.url, which would be
+    // undefined here anyway without the "tabs" permission.
+    currentTabCaptureBtn.onclick = () => captureFromCurrentTab(job, resp.sourceUrl);
+  });
+}
+
+// React to tab switches (fires with just a tabId — no "tabs" permission needed).
+chrome.tabs.onActivated.addListener(refreshCurrentJob);
+
+// React to LinkedIn SPA navigation broadcast from the content script.
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg?.action === 'jobChanged') refreshCurrentJob();
+});
+
+// Panel document is torn down on close and rebuilt on reopen — re-sync on focus.
+window.addEventListener('focus', () => {
+  refreshCurrentJob();
+  loadRecentApplications();
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    refreshCurrentJob();
+    loadRecentApplications();
+  }
+});
+
+function captureFromCurrentTab(fields, sourceUrl) {
+  currentTabCaptureBtn.disabled = true;
+  currentTabCaptureLabel.textContent = 'Capturing…';
+  chrome.runtime.sendMessage(
+    { action: 'capture', payload: { source: 'extension-structured', fields, sourceUrl } },
+    (resp) => {
+      currentTabCaptureBtn.disabled = false;
+      currentTabCaptureLabel.textContent = resp?.success ? 'Captured — opening draft' : "Couldn't capture, try again";
+      setTimeout(() => {
+        currentTabCaptureLabel.textContent = 'Capture to Notespacehub';
+      }, 3000);
+    },
+  );
+}
+
+// ── Recent applications ──────────────────────────────────────────────────────
+
+function requestApplications() {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({ action: 'fetchApplications' }, (res) => {
+      if (res?.success) resolve(res.data);
+      else reject(new Error(res?.error || 'Failed to load applications'));
+    });
+  });
+}
+
+async function loadRecentApplications() {
+  applicationsLoading.style.display = 'flex';
+  applicationsEmpty.style.display = 'none';
+  applicationsTableWrap.style.display = 'none';
+  applicationsTodayCount.textContent = '';
+
+  try {
+    const { applications, todayCount } = await requestApplications();
+    applicationsLoading.style.display = 'none';
+    applicationsTodayCount.textContent = `${todayCount} application${todayCount === 1 ? '' : 's'} recorded today`;
+
+    if (!applications?.length) {
+      applicationsEmpty.textContent = 'No applications yet. Capture your first job to get started.';
+      applicationsEmpty.style.display = 'block';
+      return;
+    }
+    applicationsList.innerHTML = applications
+      .map(
+        (app) => `
+        <tr class="app-row cursor-pointer hover:bg-gray-50 transition-colors border-b border-gray-100 last:border-0" data-id="${esc(app.id)}">
+          <td class="py-2 pr-2 min-w-0">
+            <span class="block text-sm text-gray-900 truncate">${esc(app.role)}</span>
+          </td>
+          <td class="py-2 pl-2 min-w-0 text-right">
+            <span class="block text-xs text-gray-400 truncate">${esc(app.company)}</span>
+          </td>
+        </tr>`,
+      )
+      .join('');
+    applicationsList.querySelectorAll('.app-row').forEach((row) => {
+      row.addEventListener('click', () => {
+        chrome.runtime.sendMessage({ action: 'openAppTab', path: `/applications/${row.dataset.id}` });
+      });
+    });
+    applicationsTableWrap.style.display = 'block';
+  } catch {
+    applicationsLoading.style.display = 'none';
+    applicationsEmpty.textContent = 'Failed to load applications';
+    applicationsEmpty.style.display = 'block';
+  }
+}
+
+// ── Home tabs (Applications / Notes) ─────────────────────────────────────────
+
+const TAB_ACTIVE_CLASS = 'flex-1 text-center text-xs font-medium py-2.5 border-b-2 border-gray-900 text-gray-900 transition-colors cursor-pointer';
+const TAB_INACTIVE_CLASS = 'flex-1 text-center text-xs font-medium py-2.5 border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors cursor-pointer';
+
+function setActiveTab(tab) {
+  const isApplications = tab === 'applications';
+  tabApplications.style.display = isApplications ? 'flex' : 'none';
+  tabNotes.style.display = isApplications ? 'none' : 'flex';
+  tabApplicationsBtn.className = isApplications ? TAB_ACTIVE_CLASS : TAB_INACTIVE_CLASS;
+  tabNotesBtn.className = isApplications ? TAB_INACTIVE_CLASS : TAB_ACTIVE_CLASS;
+}
+
+tabApplicationsBtn.addEventListener('click', () => setActiveTab('applications'));
+tabNotesBtn.addEventListener('click', () => setActiveTab('notes'));
+
+// ── Refresh ───────────────────────────────────────────────────────────────────
+
+refreshBtn.addEventListener('click', () => {
+  refreshBtn.disabled = true;
+  refreshBtn.classList.add('animate-spin');
+  Promise.allSettled([loadNotes(), refreshCurrentJob(), loadRecentApplications()]).finally(() => {
+    refreshBtn.disabled = false;
+    refreshBtn.classList.remove('animate-spin');
+  });
+});
 
 function showLoggedOut() {
   viewLoading.style.display = 'none';
@@ -388,9 +626,85 @@ function showLoggedOut() {
   viewLoggedOut.style.display = 'flex';
 }
 
+// Same fix as notehub-app's editor-tools.ts: editorjs-button leaves its (hidden)
+// text/link contentEditable divs in the DOM even in view state (display:none),
+// which throws off EditorJS's hover-toolbar positioning for saved buttons.
+// Disabling contentEditable while hidden avoids that.
+class AnyButtonTool extends AnyButton {
+  changeState(state) {
+    super.changeState(state);
+    const isEdit = state === AnyButton.STATE.EDIT;
+    if (this.nodes.textInput) this.nodes.textInput.contentEditable = isEdit ? 'true' : 'false';
+    if (this.nodes.linkInput) this.nodes.linkInput.contentEditable = isEdit ? 'true' : 'false';
+  }
+}
+
+function toBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function requestUploadBucket(kind, base64, name, contentType) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({ action: 'uploadBucket', kind, base64, name, contentType }, (res) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else if (res && res.success) {
+        resolve(res.data);
+      } else {
+        reject(new Error(res?.error || 'Upload failed'));
+      }
+    });
+  });
+}
+
+async function uploadToBucket(file, kind) {
+  if (file.size > MAX_SIZE_FILE) {
+    throw new Error(`File size is maximal ${MAX_IN_MB}MB`);
+  }
+  const base64 = await toBase64(file);
+  return requestUploadBucket(kind, base64, file.name, file.type);
+}
+
+// Mirrors notehub-app's src/components/editor/editor-tools.ts tool-for-tool, so a
+// note made in the app doesn't drop any block type EditorJS doesn't recognize
+// (table/warning/toggle/image/etc.) when opened here. Shared by all three
+// EditorJS instances below (readOnly is a separate top-level EditorJS option).
+function buildEditorTools() {
+  return {
+    header: { class: Header, inlineToolbar: true, config: { placeholder: 'Enter a header', levels: [2, 3, 4], defaultLevel: 3 } },
+    list: { class: EditorjsList, inlineToolbar: true },
+    checklist: { class: Checklist, inlineToolbar: true },
+    quote: { class: Quote, inlineToolbar: true, toolbox: false },
+    table: { class: Table, inlineToolbar: true },
+    warning: { class: Warning, inlineToolbar: true, config: { titlePlaceholder: 'Title', messagePlaceholder: 'Message' } },
+    toggle: { class: ToggleBlock, inlineToolbar: true },
+    underline: { class: Underline },
+    colorPicker: { class: ColorPicker },
+    anyButton: { class: AnyButtonTool, inlineToolbar: false },
+    linkTool: { class: LinkTool, config: { endpoint: `${API_BASE}/link` } },
+    attaches: { class: AttachesTool, config: { uploader: { uploadByFile: (file) => uploadToBucket(file, 'file') } } },
+    image: {
+      class: InlineImage,
+      inlineToolbar: true,
+      toolbox: false,
+      config: {
+        embed: { display: true },
+        unsplash: { apiUrl: `${API_BASE}/unsplash/photos`, maxResults: 30, imageParams: { q: 85, w: 1500 } },
+      },
+    },
+    imageUpload: { class: ImageTool, config: { uploader: { uploadByFile: (file) => uploadToBucket(file, 'image') } } },
+  };
+}
+
 async function showNoteDetail(item) {
   currentNote = item;
   viewLoggedIn.style.display = 'none';
+  viewFolder.style.display = 'none';
   viewNoteEdit.style.display = 'none';
   viewNoteDetail.style.display = 'flex';
 
@@ -407,7 +721,7 @@ async function showNoteDetail(item) {
     ' · ' + timeAgo(item.updatedAt);
 
   noteDetailLink.onclick = () => {
-    chrome.tabs.create({ url: `${APP_BASE}/write/${item.id}` });
+    chrome.runtime.sendMessage({ action: 'openAppTab', path: `/write/${item.id}` });
   };
 
   await destroyDetailEditor();
@@ -422,12 +736,7 @@ async function showNoteDetail(item) {
     detailEditorInstance = new EditorJS({
       holder: noteDetailEditorHolder,
       data: item.note && Array.isArray(item.note.blocks) ? item.note : { blocks: [] },
-      tools: {
-        header: Header,
-        list: EditorjsList,
-        checklist: Checklist,
-        quote: Quote,
-      },
+      tools: buildEditorTools(),
       readOnly: true,
     });
   } else {
@@ -452,12 +761,43 @@ async function showNoteDetail(item) {
   }
 }
 
+async function showFolderView(item) {
+  activeFolder = item;
+  viewLoggedIn.style.display = 'none';
+  viewNoteDetail.style.display = 'none';
+  viewFolder.style.display = 'flex';
+  folderTitle.textContent = item.title || 'Untitled folder';
+
+  folderLoadingEl.style.display = 'flex';
+  folderEmptyEl.style.display = 'none';
+  folderGrid.style.display = 'none';
+  folderGrid.innerHTML = '';
+
+  try {
+    const { notes } = await requestFolder(item.id, sortOrder);
+    folderLoadingEl.style.display = 'none';
+    if (!notes?.length) {
+      folderEmptyMsg.textContent = 'No notes in this folder';
+      folderEmptyEl.style.display = 'flex';
+    } else {
+      folderGrid.style.display = 'grid';
+      notes.forEach((note) => folderGrid.appendChild(buildNoteCard(note)));
+    }
+  } catch {
+    folderLoadingEl.style.display = 'none';
+    folderEmptyMsg.textContent = 'Failed to load folder';
+    folderEmptyEl.style.display = 'flex';
+  }
+}
+
 function showHome() {
   viewNoteDetail.style.display = 'none';
   viewNoteEdit.style.display = 'none';
   viewTodoEdit.style.display = 'none';
   viewNoteCreate.style.display = 'none';
   viewTodoCreate.style.display = 'none';
+  viewFolder.style.display = 'none';
+  activeFolder = null;
   viewLoggedIn.style.display = 'flex';
   destroyEditor();
   destroyDetailEditor();
@@ -493,12 +833,7 @@ async function showNoteEdit(item) {
   editorInstance = new EditorJS({
     holder: 'editorjs-holder',
     data: item.note && Array.isArray(item.note.blocks) ? item.note : { blocks: [] },
-    tools: {
-      header: Header,
-      list: EditorjsList,
-      checklist: Checklist,
-      quote: Quote,
-    },
+    tools: buildEditorTools(),
     placeholder: 'Start writing…',
   });
 }
@@ -708,12 +1043,7 @@ async function showNoteCreate() {
   createEditorInstance = new EditorJS({
     holder: 'noteCreate-editorjs-holder',
     data: { blocks: [] },
-    tools: {
-      header: Header,
-      list: EditorjsList,
-      checklist: Checklist,
-      quote: Quote,
-    },
+    tools: buildEditorTools(),
     placeholder: 'Start writing…',
   });
 
@@ -769,7 +1099,12 @@ sortBtn.addEventListener('click', () => {
   loadNotes();
 });
 
-noteDetailBackBtn.addEventListener('click', showHome);
+noteDetailBackBtn.addEventListener('click', () => {
+  if (activeFolder) showFolderView(activeFolder);
+  else showHome();
+});
+
+folderBackBtn.addEventListener('click', showHome);
 
 noteDetailEditBtn.addEventListener('click', () => {
   if (currentNote.type === 'todolist') showTodoEdit(currentNote);

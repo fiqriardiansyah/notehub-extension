@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NoteHub</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body class="w-full h-screen min-h-screen font-sans bg-white text-gray-900 overflow-hidden">
+
+  <!-- Capture status banner (loading/success/error), overlays top of every view -->
+  <div id="captureBanner" class="fixed top-0 left-0 right-0 z-50 flex items-center justify-center gap-2 px-4 py-2 text-xs font-medium text-white shadow-sm" style="display:none">
+    <span id="captureBannerSpinner" class="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin shrink-0"></span>
+    <span id="captureBannerText"></span>
+  </div>
+
+  <!-- Loading -->
+  <div id="view-loading" class="flex items-center justify-center w-full h-screen">
+    <div class="w-8 h-8 border-4 border-gray-100 border-t-gray-700 rounded-full animate-spin"></div>
+  </div>
+
+  <!-- Logged out -->
+  <div id="view-logged-out" class="flex items-center justify-center w-full h-screen" style="display:none">
+    <div class="flex flex-col items-center gap-3 w-[280px]">
+      <img src="https://ik.imagekit.io/p4ukigs1hrvx/notspacehub-no-bg.png?updatedAt=1730190333568" alt="NoteSpaceHub" class="h-10 mb-1" />
+      <p class="text-sm text-gray-500 mb-2 text-center">Sign in to access your notes</p>
+      <button
+        id="loginBtn"
+        class="w-full py-2.5 text-sm font-medium text-white bg-gray-900 rounded-lg cursor-pointer transition-colors hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
+      >Sign in</button>
+      <p id="login-error" class="text-xs text-red-500 text-center" style="display:none"></p>
+    </div>
+  </div>
+
+  <!-- Logged in / Home -->
+  <div id="view-logged-in" class="flex flex-col w-full h-screen overflow-hidden" style="display:none">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between px-4 py-3 border-b border-gray-100 shrink-0">
+      <div class="flex items-center gap-2">
+        <a id="appHomeLink" href="#" target="_blank" rel="noopener noreferrer">
+          <img src="https://ik.imagekit.io/p4ukigs1hrvx/notspacehub-no-bg.png?updatedAt=1730190333568" alt="NoteSpaceHub" class="h-5" />
+        </a>
+      </div>
+      <div class="flex items-center gap-3">
+        <button id="refreshBtn" title="Refresh" class="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-default">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+          </svg>
+        </button>
+        <button id="logoutBtn" class="text-xs text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">Sign out</button>
+      </div>
+    </div>
+
+    <!-- Current tab: capture -->
+    <div class="px-4 py-3 border-b border-gray-100 shrink-0">
+      <div id="currentTabJob" style="display:none">
+        <p class="text-[11px] uppercase tracking-wide text-gray-400 mb-1">On this page</p>
+        <p id="currentTabTitle" class="text-sm font-semibold text-gray-900 truncate"></p>
+        <p id="currentTabCompany" class="text-xs text-gray-500 truncate mb-2"></p>
+        <button id="currentTabCaptureBtn" class="w-full py-2 text-xs font-semibold text-white rounded-lg cursor-pointer transition-colors bg-[#141b2d] hover:bg-[#1d2a45] disabled:opacity-60 disabled:cursor-default flex items-center justify-center gap-1.5">
+          <span class="w-1.5 h-1.5 rounded-full bg-[#f5b301] shrink-0"></span>
+          <span id="currentTabCaptureLabel">Capture to Notespacehub</span>
+        </button>
+      </div>
+      <div id="currentTabHint" class="text-xs text-gray-400" style="display:none">
+        Highlight the job text on this page and right-click → "Capture job to Notespacehub".
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="flex border-b border-gray-100 shrink-0">
+      <button id="tabApplicationsBtn" class="flex-1 text-center text-xs font-medium py-2.5 border-b-2 border-gray-900 text-gray-900 transition-colors cursor-pointer">Applications</button>
+      <button id="tabNotesBtn" class="flex-1 text-center text-xs font-medium py-2.5 border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">Notes</button>
+    </div>
+
+    <!-- Tab: Recent applications -->
+    <div id="tab-applications" class="flex flex-col flex-1 min-h-0 overflow-y-auto px-4 py-3">
+      <p id="applications-today-count" class="text-xs text-gray-500 mb-2"></p>
+      <div id="applications-loading" class="flex items-center justify-center h-10">
+        <div class="w-4 h-4 border-2 border-gray-200 border-t-gray-700 rounded-full animate-spin"></div>
+      </div>
+      <p id="applications-empty" class="text-xs text-gray-400" style="display:none">No applications yet. Capture your first job to get started.</p>
+      <div id="applications-table-wrap" style="display:none">
+        <table class="w-full text-sm border-collapse">
+          <tbody id="applications-list"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Tab: Notes -->
+    <div id="tab-notes" class="flex flex-col flex-1 min-h-0" style="display:none">
+
+      <!-- Search -->
+      <div class="px-3 pt-3 pb-2 shrink-0">
+        <div class="flex items-center gap-2">
+          <div class="relative flex-1">
+            <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+            <input
+              id="searchInput"
+              type="text"
+              placeholder="Find anything"
+              class="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg outline-none placeholder-gray-400 focus:border-gray-400 transition-colors bg-white"
+            />
+          </div>
+          <div class="relative shrink-0">
+            <button id="addNoteBtn" class="flex items-center justify-center w-8 h-8 rounded-lg bg-gray-900 text-white hover:bg-gray-700 transition-colors cursor-pointer" title="Add note">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+              </svg>
+            </button>
+            <div id="addNoteDropdown" class="absolute right-0 top-full mt-1 w-36 bg-white border border-gray-200 rounded-lg shadow-lg z-10 overflow-hidden" style="display:none">
+              <button id="addFreetextBtn" class="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors cursor-pointer flex items-center gap-2">
+                <svg class="w-3.5 h-3.5 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                </svg>
+                Freetext
+              </button>
+              <button id="addTodolistBtn" class="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors cursor-pointer flex items-center gap-2">
+                <svg class="w-3.5 h-3.5 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
+                </svg>
+                Todolist
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sort + tag filters -->
+      <div class="px-3 pb-2 flex items-center gap-2 flex-wrap shrink-0">
+        <button id="sortBtn" class="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 transition-colors cursor-pointer shrink-0">
+          <svg id="sortIcon" class="w-3 h-3 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+          </svg>
+          Last Modified
+        </button>
+        <div id="tag-filters" class="flex gap-1 flex-wrap"></div>
+      </div>
+
+      <!-- Notes grid -->
+      <div class="flex-1 min-h-0 overflow-y-auto px-3 pb-3">
+        <div id="notes-loading" class="flex items-center justify-center h-40">
+          <div class="w-5 h-5 border-2 border-gray-200 border-t-gray-700 rounded-full animate-spin"></div>
+        </div>
+        <div id="notes-empty" class="flex flex-col items-center justify-center h-40 text-gray-400 gap-2" style="display:none">
+          <svg class="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+          </svg>
+          <p id="notes-empty-msg" class="text-sm">No notes found</p>
+        </div>
+        <div id="notes-grid" class="grid grid-cols-2 gap-2" style="display:none"></div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- Note Detail -->
+  <div id="view-note-detail" class="flex flex-col w-full h-screen" style="display:none">
+
+    <!-- Header -->
+    <div class="flex items-center gap-2 px-4 py-3 border-b border-gray-100 shrink-0">
+      <button id="noteDetailBackBtn" class="p-1 -ml-1 text-gray-500 hover:text-gray-700 transition-colors cursor-pointer shrink-0">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+        </svg>
+      </button>
+      <h2 id="noteDetailTitle" class="text-sm font-semibold text-gray-900 truncate flex-1 min-w-0"></h2>
+      <button id="noteDetailCopyBtn" class="text-xs font-medium text-gray-600 hover:text-gray-900 px-2 py-1 rounded-md hover:bg-gray-100 transition-colors cursor-pointer shrink-0" style="display:none">Copy</button>
+      <button id="noteDetailEditBtn" class="text-xs font-medium text-gray-600 hover:text-gray-900 px-2 py-1 rounded-md hover:bg-gray-100 transition-colors cursor-pointer shrink-0" style="display:none">Edit</button>
+    </div>
+
+    <!-- Date + open link -->
+    <div class="px-4 py-2 flex items-center justify-between border-b border-gray-100 shrink-0">
+      <span id="noteDetailDate" class="text-[11px] text-gray-400"></span>
+      <button id="noteDetailLink" class="text-[11px] text-blue-500 hover:text-blue-600 transition-colors flex items-center gap-1 cursor-pointer">
+        Open in NoteHub
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Content -->
+    <div class="flex-1 min-h-0 overflow-y-auto px-4 py-3">
+      <div id="noteDetailContent" class="text-sm text-gray-800 leading-relaxed note-content"></div>
+      <div id="noteDetailEditorHolder" style="display:none"></div>
+    </div>
+
+  </div>
+
+  <!-- Folder -->
+  <div id="view-folder" class="flex flex-col w-full h-screen" style="display:none">
+
+    <!-- Header -->
+    <div class="flex items-center gap-2 px-4 py-3 border-b border-gray-100 shrink-0">
+      <button id="folderBackBtn" class="p-1 -ml-1 text-gray-500 hover:text-gray-700 transition-colors cursor-pointer shrink-0">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+        </svg>
+      </button>
+      <h2 id="folderTitle" class="text-sm font-semibold text-gray-900 truncate flex-1 min-w-0"></h2>
+    </div>
+
+    <!-- Notes grid -->
+    <div class="flex-1 min-h-0 overflow-y-auto px-3 py-3">
+      <div id="folder-loading" class="flex items-center justify-center h-40">
+        <div class="w-5 h-5 border-2 border-gray-200 border-t-gray-700 rounded-full animate-spin"></div>
+      </div>
+      <div id="folder-empty" class="flex flex-col items-center justify-center h-40 text-gray-400 gap-2" style="display:none">
+        <svg class="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
+        </svg>
+        <p id="folder-empty-msg" class="text-sm">No notes in this folder</p>
+      </div>
+      <div id="folder-grid" class="grid grid-cols-2 gap-2" style="display:none"></div>
+    </div>
+
+  </div>
+
+  <!-- Note Edit -->
+  <div id="view-note-edit" class="flex flex-col w-full h-screen" style="display:none">
+
+    <!-- Header -->
+    <div class="flex items-center gap-2 px-4 py-3 border-b border-gray-100 shrink-0">
+      <button id="noteEditBackBtn" class="p-1 -ml-1 text-gray-500 hover:text-gray-700 transition-colors cursor-pointer shrink-0">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+        </svg>
+      </button>
+      <h2 id="noteEditTitle" class="text-sm font-semibold text-gray-900 truncate flex-1 min-w-0"></h2>
+      <button id="noteEditSaveBtn" class="text-xs font-medium text-white bg-gray-900 px-3 py-1.5 rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer shrink-0">Save</button>
+    </div>
+
+    <!-- Save error -->
+    <p id="noteEditError" class="px-4 pt-2 text-xs text-red-500" style="display:none"></p>
+
+    <!-- EditorJS container -->
+    <div class="flex-1 min-h-0 overflow-y-auto">
+      <div id="editorjs-holder" class="px-2 py-2 min-h-full"></div>
+    </div>
+
+  </div>
+
+  <!-- Todo Edit -->
+  <div id="view-todo-edit" class="flex flex-col w-full h-screen" style="display:none">
+
+    <!-- Header -->
+    <div class="flex items-center gap-2 px-4 py-3 border-b border-gray-100 shrink-0">
+      <button id="todoEditBackBtn" class="p-1 -ml-1 text-gray-500 hover:text-gray-700 transition-colors cursor-pointer shrink-0">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+        </svg>
+      </button>
+      <h2 id="todoEditTitle" class="text-sm font-semibold text-gray-900 truncate flex-1 min-w-0"></h2>
+      <button id="todoEditSaveBtn" class="text-xs font-medium text-white bg-gray-900 px-3 py-1.5 rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer shrink-0">Save</button>
+    </div>
+
+    <!-- Save error -->
+    <p id="todoEditError" class="px-4 pt-2 text-xs text-red-500" style="display:none"></p>
+
+    <!-- Todo list -->
+    <div class="flex-1 min-h-0 overflow-y-auto px-4 py-2">
+      <div id="todo-edit-list" class="flex flex-col"></div>
+    </div>
+
+    <!-- Add todo input -->
+    <div class="px-4 py-3 border-t border-gray-100 shrink-0">
+      <input
+        id="todoAddInput"
+        type="text"
+        placeholder="Add a task…"
+        class="w-full text-sm text-gray-800 bg-white border border-gray-900 rounded-lg px-3 py-2 outline-none placeholder-gray-400 focus:ring-2 focus:ring-gray-900 focus:ring-offset-1 transition-shadow"
+      />
+    </div>
+
+  </div>
+
+  <!-- Note Create (Freetext) -->
+  <div id="view-note-create" class="flex flex-col w-full h-screen" style="display:none">
+
+    <!-- Header -->
+    <div class="flex items-center gap-2 px-4 py-3 border-b border-gray-100 shrink-0">
+      <button id="noteCreateBackBtn" class="p-1 -ml-1 text-gray-500 hover:text-gray-700 transition-colors cursor-pointer shrink-0">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+        </svg>
+      </button>
+      <input id="noteCreateTitleInput" type="text" placeholder="Title" class="flex-1 text-sm font-semibold text-gray-900 outline-none bg-transparent min-w-0 placeholder-gray-400" />
+      <button id="noteCreateSaveBtn" class="text-xs font-medium text-white bg-gray-900 px-3 py-1.5 rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer shrink-0">Save</button>
+    </div>
+
+    <!-- Save error -->
+    <p id="noteCreateError" class="px-4 pt-2 text-xs text-red-500" style="display:none"></p>
+
+    <!-- EditorJS container -->
+    <div class="flex-1 min-h-0 overflow-y-auto">
+      <div id="noteCreate-editorjs-holder" class="px-2 py-2 min-h-full"></div>
+    </div>
+
+  </div>
+
+  <!-- Todo Create -->
+  <div id="view-todo-create" class="flex flex-col w-full h-screen" style="display:none">
+
+    <!-- Header -->
+    <div class="flex items-center gap-2 px-4 py-3 border-b border-gray-100 shrink-0">
+      <button id="todoCreateBackBtn" class="p-1 -ml-1 text-gray-500 hover:text-gray-700 transition-colors cursor-pointer shrink-0">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+        </svg>
+      </button>
+      <input id="todoCreateTitleInput" type="text" placeholder="Title" class="flex-1 text-sm font-semibold text-gray-900 outline-none bg-transparent min-w-0 placeholder-gray-400" />
+      <button id="todoCreateSaveBtn" class="text-xs font-medium text-white bg-gray-900 px-3 py-1.5 rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer shrink-0">Save</button>
+    </div>
+
+    <!-- Save error -->
+    <p id="todoCreateError" class="px-4 pt-2 text-xs text-red-500" style="display:none"></p>
+
+    <!-- Todo list -->
+    <div class="flex-1 min-h-0 overflow-y-auto px-4 py-2">
+      <div id="todo-create-list" class="flex flex-col"></div>
+    </div>
+
+    <!-- Add todo input -->
+    <div class="px-4 py-3 border-t border-gray-100 shrink-0">
+      <input
+        id="todoCreateAddInput"
+        type="text"
+        placeholder="Add a task…"
+        class="w-full text-sm text-gray-800 bg-white border border-gray-900 rounded-lg px-3 py-2 outline-none placeholder-gray-400 focus:ring-2 focus:ring-gray-900 focus:ring-offset-1 transition-shadow"
+      />
+    </div>
+
+  </div>
+
+  <script src="config.js"></script>
+  <script src="purify.min.js"></script>
+  <script src="editorjs.umd.js"></script>
+  <script src="editorjs-header.umd.js"></script>
+  <script src="editorjs-list.umd.js"></script>
+  <script src="editorjs-checklist.umd.js"></script>
+  <script src="editorjs-quote.umd.js"></script>
+  <script src="editorjs-table.umd.js"></script>
+  <script src="editorjs-warning.umd.js"></script>
+  <script src="editorjs-toggle-block.umd.js"></script>
+  <script src="editorjs-underline.umd.js"></script>
+  <script src="editorjs-color-picker.umd.js"></script>
+  <script src="editorjs-button.umd.js"></script>
+  <script src="editorjs-link.umd.js"></script>
+  <script src="editorjs-attaches.umd.js"></script>
+  <script src="editorjs-inline-image.umd.js"></script>
+  <script src="editorjs-image.umd.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
