@@ -5,7 +5,7 @@
   "version": "1.0.0",
   "description": "NotespaceHub browser extension",
   "permissions": ["identity", "storage", "contextMenus", "notifications", "scripting", "sidePanel"],
-  "host_permissions": ["https://notespacehub.com/*", "http://127.0.0.0:4173/*", "http://localhost:4173/*", "http://localhost:3000/*", "https://www.linkedin.com/*"],
+  "host_permissions": ["https://notespacehub.com/*", "http://127.0.0.0:4173/*", "http://localhost:4173/*", "http://localhost:3000/*", "http://localhost:1111/*", "https://www.linkedin.com/*"],
   "background": { "service_worker": "background.js" },
   "side_panel": { "default_path": "sidepanel.html" },
   "content_scripts": [

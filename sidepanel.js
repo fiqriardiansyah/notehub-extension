@@ -68,6 +68,7 @@ appHomeLink.href = APP_BASE;
 const captureBanner = document.getElementById('captureBanner');
 const captureBannerSpinner = document.getElementById('captureBannerSpinner');
 const captureBannerText = document.getElementById('captureBannerText');
+const captureBannerClose = document.getElementById('captureBannerClose');
 
 const currentTabJob = document.getElementById('currentTabJob');
 const currentTabHint = document.getElementById('currentTabHint');
@@ -407,10 +408,10 @@ async function loadNotes() {
     allNotes = await requestNotes(sortOrder);
     notesLoadingEl.style.display = 'none';
     renderAll();
-  } catch {
+  } catch (err) {
     notesLoadingEl.style.display = 'none';
     notesEmptyEl.style.display = 'flex';
-    notesEmptyMsg.textContent = 'Failed to load notes';
+    notesEmptyMsg.textContent = `Couldn't load notes: ${err.message}`;
   }
 }
 
@@ -448,14 +449,31 @@ function setCaptureBanner(status, message) {
   captureBanner.className =
     `fixed top-0 left-0 right-0 z-50 flex items-center justify-center gap-2 px-4 py-2 text-xs font-medium text-white shadow-sm ${CAPTURE_BANNER_STYLE[status] || CAPTURE_BANNER_STYLE.capturing}`;
   captureBannerSpinner.style.display = status === 'capturing' ? 'inline-block' : 'none';
+  captureBannerClose.style.display = status === 'error' ? 'inline-block' : 'none';
   captureBannerText.textContent = message || '';
 }
 
+// Panel-local failures (opening the app tab, copying…) share the banner with
+// capture errors so every error surfaces in one place.
+function showPanelError(message) {
+  setCaptureBanner('error', message);
+}
+
+function dismissCaptureBanner() {
+  setCaptureBanner('idle');
+  chrome.storage.session.set({ captureStatus: 'idle', captureMessage: '' });
+}
+
+captureBannerClose.addEventListener('click', dismissCaptureBanner);
+
 function syncCaptureBanner() {
   chrome.storage.session.get(['captureStatus', 'captureMessage'], (res) => {
-    // Only reflect a still-in-flight capture on (re)load — a stale
-    // success/error from before the panel existed isn't worth surfacing.
-    if (res.captureStatus === 'capturing') setCaptureBanner('capturing', res.captureMessage);
+    // Reflect an in-flight capture, or an error nobody has dismissed yet (a
+    // pill/right-click capture can fail while the panel is closed). A stale
+    // success isn't worth surfacing.
+    if (res.captureStatus === 'capturing' || res.captureStatus === 'error') {
+      setCaptureBanner(res.captureStatus, res.captureMessage);
+    }
   });
 }
 
@@ -463,10 +481,12 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'session' || !changes.captureStatus) return;
   const status = changes.captureStatus.newValue;
   chrome.storage.session.get('captureMessage', (res) => setCaptureBanner(status, res.captureMessage));
-  if (status === 'success' || status === 'error') {
+  // Errors stay up until dismissed — only success clears itself.
+  if (status === 'success') {
     setTimeout(() => {
-      setCaptureBanner('idle');
-      chrome.storage.session.set({ captureStatus: 'idle', captureMessage: '' });
+      chrome.storage.session.get('captureStatus', (res) => {
+        if (res.captureStatus === 'success') dismissCaptureBanner();
+      });
     }, 3000);
   }
 });
@@ -530,6 +550,9 @@ function captureFromCurrentTab(fields, sourceUrl) {
     (resp) => {
       currentTabCaptureBtn.disabled = false;
       currentTabCaptureLabel.textContent = resp?.success ? 'Captured — opening draft' : "Couldn't capture, try again";
+      // background.js's capture() already put its reason in the banner; this
+      // covers the worker not answering at all.
+      if (!resp?.success) showPanelError(resp?.error || chrome.runtime.lastError?.message || 'Capture failed');
       setTimeout(() => {
         currentTabCaptureLabel.textContent = 'Capture to Notespacehub';
       }, 3000);
@@ -537,12 +560,20 @@ function captureFromCurrentTab(fields, sourceUrl) {
   );
 }
 
+function openAppTab(path) {
+  chrome.runtime.sendMessage({ action: 'openAppTab', path }, (res) => {
+    if (chrome.runtime.lastError) showPanelError(chrome.runtime.lastError.message);
+    else if (!res?.success) showPanelError(res?.error || "Couldn't open Notespacehub");
+  });
+}
+
 // ── Recent applications ──────────────────────────────────────────────────────
 
 function requestApplications() {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage({ action: 'fetchApplications' }, (res) => {
-      if (res?.success) resolve(res.data);
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else if (res?.success) resolve(res.data);
       else reject(new Error(res?.error || 'Failed to load applications'));
     });
   });
@@ -579,13 +610,13 @@ async function loadRecentApplications() {
       .join('');
     applicationsList.querySelectorAll('.app-row').forEach((row) => {
       row.addEventListener('click', () => {
-        chrome.runtime.sendMessage({ action: 'openAppTab', path: `/applications/${row.dataset.id}` });
+        openAppTab(`/applications/${row.dataset.id}`);
       });
     });
     applicationsTableWrap.style.display = 'block';
-  } catch {
+  } catch (err) {
     applicationsLoading.style.display = 'none';
-    applicationsEmpty.textContent = 'Failed to load applications';
+    applicationsEmpty.textContent = `Couldn't load applications: ${err.message}`;
     applicationsEmpty.style.display = 'block';
   }
 }
@@ -721,7 +752,7 @@ async function showNoteDetail(item) {
     ' · ' + timeAgo(item.updatedAt);
 
   noteDetailLink.onclick = () => {
-    chrome.runtime.sendMessage({ action: 'openAppTab', path: `/write/${item.id}` });
+    openAppTab(`/write/${item.id}`);
   };
 
   await destroyDetailEditor();
@@ -783,9 +814,9 @@ async function showFolderView(item) {
       folderGrid.style.display = 'grid';
       notes.forEach((note) => folderGrid.appendChild(buildNoteCard(note)));
     }
-  } catch {
+  } catch (err) {
     folderLoadingEl.style.display = 'none';
-    folderEmptyMsg.textContent = 'Failed to load folder';
+    folderEmptyMsg.textContent = `Couldn't load folder: ${err.message}`;
     folderEmptyEl.style.display = 'flex';
   }
 }
@@ -1082,7 +1113,7 @@ loginBtn.addEventListener('click', () => {
     loginBtn.disabled = false;
     loginBtn.textContent = 'Sign in';
     if (res?.success) showLoggedIn();
-    else showError(res?.error || 'Sign in failed. Please try again.');
+    else showError(res?.error || chrome.runtime.lastError?.message || 'Sign in failed. Please try again.');
   });
 });
 
@@ -1119,7 +1150,9 @@ noteDetailCopyBtn.addEventListener('click', async () => {
     await navigator.clipboard.writeText(DOMPurify.sanitize(text));
     noteDetailCopyBtn.textContent = 'Copied!';
     setTimeout(() => { noteDetailCopyBtn.textContent = 'Copy'; }, 1500);
-  } catch (_) {}
+  } catch (err) {
+    showPanelError(`Couldn't copy: ${err.message}`);
+  }
 });
 
 noteEditBackBtn.addEventListener('click', () => {
@@ -1290,5 +1323,9 @@ todoCreateSaveBtn.addEventListener('click', async () => {
 // ── Init ──────────────────────────────────────────────────────────────────────
 chrome.runtime.sendMessage({ action: 'checkSession' }, (res) => {
   if (res?.authenticated) showLoggedIn();
-  else showLoggedOut();
+  else {
+    showLoggedOut();
+    const error = res?.error || chrome.runtime.lastError?.message;
+    if (error) showError(error);
+  }
 });

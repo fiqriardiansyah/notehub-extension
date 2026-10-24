@@ -10,5 +10,5 @@
 // broad "tabs" permission.
 const DEV = true;
 
-const API_BASE = DEV ? 'http://localhost:3000/api' : 'https://notespacehub.com/api';
-const APP_BASE = DEV ? 'http://localhost:4173' : 'https://notespacehub.com';
+const API_BASE = DEV ? 'http://localhost:1111/api' : 'https://notespacehub.com/api';
+const APP_BASE = DEV ? 'http://localhost:3000' : 'https://notespacehub.com';

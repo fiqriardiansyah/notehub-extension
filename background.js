@@ -1,13 +1,46 @@
 // API_BASE / APP_BASE come from config.js — see that file for the dev switch.
 importScripts('config.js');
 
+// fetch() itself only rejects when the API can't be reached at all (offline,
+// server down, wrong API_BASE) — its bare "Failed to fetch" means nothing to
+// the user, so that case gets a readable message of its own.
+async function fetchOrNetworkError(url, init) {
+  try {
+    return await fetch(url, init);
+  } catch (_) {
+    const err = new Error("Couldn't reach Notespacehub — check your connection and try again.");
+    err.code = 'NETWORK';
+    throw err;
+  }
+}
+
+// The API answers every failure as { statusCode, message, errors? } (see
+// notehub-api's AllExceptionsFilter), and `message` is already written for the
+// user — on AI failures it carries the provider's own reason too, e.g. "Your
+// OpenRouter key was rejected — check it in Settings › AI. OpenRouter said:
+// "API key expired"". Validation failures list the offending fields in
+// `errors`. Anything unparseable (a proxy's HTML error page) falls back to
+// the bare status.
+async function errorFromResponse(res) {
+  let message = '';
+  try {
+    const body = await res.json();
+    const main = Array.isArray(body?.message) ? body.message.join(', ') : body?.message;
+    const details = Array.isArray(body?.errors) ? body.errors.filter((e) => typeof e === 'string').join(', ') : '';
+    message = [main, details].filter(Boolean).join(': ');
+  } catch (_) {}
+  const err = new Error(message || `Request failed (HTTP ${res.status})`);
+  err.status = res.status;
+  return err;
+}
+
 // Single authenticated-fetch helper — used by notes CRUD AND job capture, so
 // both go through identical auth/headers/base-URL handling (no more
 // per-call-site duplication of the Bearer header + Content-Type logic).
 async function apiFetch(path, init = {}) {
   const { access_token } = await chrome.storage.local.get('access_token');
   if (!access_token) {
-    const err = new Error('Not authenticated');
+    const err = new Error("You're signed out — sign in to Notespacehub and try again.");
     err.code = 'UNAUTHENTICATED';
     throw err;
   }
@@ -16,15 +49,14 @@ async function apiFetch(path, init = {}) {
     ...(init.body ? { 'Content-Type': 'application/json' } : {}),
     ...(init.headers || {}),
   };
-  return fetch(`${API_BASE}${path}`, { ...init, headers });
+  return fetchOrNetworkError(`${API_BASE}${path}`, { ...init, headers });
 }
 
-// Same non-ok-throws-generic-HTTP-status + {data: result.data||result}
-// unwrap every existing notes handler already used, just no longer
-// duplicated per call site.
+// Non-ok throws the API's own error message + {data: result.data||result}
+// unwrap, shared by every notes handler instead of duplicated per call site.
 async function apiFetchJson(path, init) {
   const res = await apiFetch(path, init);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) throw await errorFromResponse(res);
   const result = await res.json();
   return result.data || result;
 }
@@ -63,8 +95,8 @@ async function fetchApplicationsWithTodayCount() {
   const today = todayISODate();
   const [applications, todayRes] = await Promise.all([
     apiFetchJson('/application?limit=5'),
-    apiFetch(`/application?dateAppliedFrom=${today}&dateAppliedTo=${today}&limit=1`).then((res) => {
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    apiFetch(`/application?dateAppliedFrom=${today}&dateAppliedTo=${today}&limit=1`).then(async (res) => {
+      if (!res.ok) throw await errorFromResponse(res);
       return res.json();
     }),
   ]);
@@ -85,15 +117,19 @@ async function login() {
   });
 
   const params = new URL(redirect).searchParams;
-  if (params.get('state') !== state) throw new Error('state mismatch');
+  if (params.get('state') !== state) throw new Error('Sign in failed — the response did not match this request. Please try again.');
 
-  const res = await fetch(`${API_BASE}/oauth/token`, {
+  const res = await fetchOrNetworkError(`${API_BASE}/oauth/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code: params.get('code') }),
   });
 
-  if (!res.ok) throw new Error('token exchange failed');
+  if (!res.ok) {
+    const err = await errorFromResponse(res);
+    err.message = `Sign in failed: ${err.message}`;
+    throw err;
+  }
 
   const result = await res.json();
   const accessToken = result.data.access_token;
@@ -111,14 +147,17 @@ async function checkSession() {
 
   if (!access_token) return { authenticated: false };
 
-  const res = await fetch(`${API_BASE}/me`, {
+  const res = await fetchOrNetworkError(`${API_BASE}/me`, {
     headers: { Authorization: `Bearer ${access_token}` },
   });
 
-  if (!res.ok) {
+  // Only an auth rejection means the token is dead — a 5xx says nothing about
+  // it, so the token is kept and the error surfaced instead.
+  if (res.status === 401 || res.status === 403) {
     await chrome.storage.local.remove('access_token');
-    return { authenticated: false };
+    return { authenticated: false, error: 'Your session expired — sign in again.' };
   }
+  if (!res.ok) throw await errorFromResponse(res);
 
   return { authenticated: true };
 }
@@ -153,6 +192,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const text = (info.selectionText || '').trim();
   if (!text) {
     notify('Nothing selected', 'Highlight the job text first, then capture.');
+    setCaptureStatus('error', 'Nothing selected — highlight the job text first, then capture.');
     return;
   }
   capture({ source: 'extension-selection', text, sourceUrl: tab?.url || '' }).catch(() => {});
@@ -177,33 +217,34 @@ async function capture(payload) {
   try {
     res = await apiFetch('/application/capture', { method: 'POST', body: JSON.stringify(body) });
   } catch (err) {
-    if (err.code === 'UNAUTHENTICATED') {
-      notify('Sign in to Notespacehub', 'Open the extension and sign in, then capture again.');
-      await setCaptureStatus('error', 'Sign in to capture');
-    } else {
-      notify("Couldn't reach Notespacehub", 'Check your connection and that you are signed in.');
-      await setCaptureStatus('error', "Couldn't reach Notespacehub");
-    }
-    throw err;
+    await failCapture(err.code === 'UNAUTHENTICATED' ? 'Sign in to Notespacehub' : "Couldn't reach Notespacehub", err);
   }
 
   if (res.status === 401 || res.status === 403) {
-    notify('Sign in to Notespacehub', 'Open the extension and sign in, then capture again.');
-    await setCaptureStatus('error', 'Sign in to capture');
-    throw new Error('auth');
+    await failCapture('Sign in to Notespacehub', new Error('Your session expired — sign in again, then capture again.'));
   }
-  if (!res.ok) {
-    notify('Capture failed', `The app returned ${res.status}. Try again in a moment.`);
-    await setCaptureStatus('error', 'Capture failed, try again');
-    throw new Error('server');
-  }
+  // The API's own message — for an AI extraction failure this is the
+  // provider's reason (expired/rejected key, no credits, rate limit…).
+  if (!res.ok) await failCapture('Capture failed', await errorFromResponse(res));
 
   const result = await res.json();
   const data = result.data || result;
-  await openOrFocusAppTab(data.redirectUrl);
+  try {
+    await openOrFocusAppTab(data.redirectUrl);
+  } catch (err) {
+    await failCapture('Draft saved', new Error(`The draft was saved, but the app tab couldn't be opened: ${err.message}`));
+  }
   notify('Draft ready', 'Review and confirm it in the app tab.');
   await setCaptureStatus('success', 'Draft ready — opening app tab');
   return data;
+}
+
+// Every capture failure reaches the user the same way: an OS notification
+// (the panel may be closed) plus the panel banner, both with the full reason.
+async function failCapture(title, err) {
+  notify(title, err.message);
+  await setCaptureStatus('error', err.message);
+  throw err;
 }
 
 function notify(title, message) {
@@ -223,8 +264,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 
+  // A network failure (API down / wrong API_BASE) must still answer, or the
+  // panel's startup spinner never clears. The token is kept — it may be valid.
   if (msg.action === 'checkSession') {
-    checkSession().then((result) => sendResponse(result));
+    checkSession()
+      .then((result) => sendResponse(result))
+      .catch((err) => sendResponse({ authenticated: false, error: err.message }));
     return true;
   }
 
@@ -295,7 +340,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg.action === 'openAppTab') {
-    openOrFocusAppTab(msg.path).then(() => sendResponse({ success: true }));
+    openOrFocusAppTab(msg.path)
+      .then(() => sendResponse({ success: true }))
+      .catch((err) => sendResponse({ success: false, error: `Couldn't open Notespacehub: ${err.message}` }));
     return true;
   }
 });

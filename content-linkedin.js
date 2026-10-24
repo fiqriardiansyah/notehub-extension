@@ -122,8 +122,11 @@ function onCapture() {
     { action: 'capture', payload: { source: 'extension-structured', fields, sourceUrl: location.href } },
     (resp) => {
       const ok = !chrome.runtime.lastError && resp?.success;
-      setState(ok ? 'done' : 'error', ok ? 'Captured — opening draft' : 'Couldn\'t capture');
-      setTimeout(() => setState('idle', 'Capture to Notespacehub'), 3000);
+      // The API's reason (e.g. an expired AI key) — left up longer than a
+      // success so it can actually be read.
+      const error = chrome.runtime.lastError?.message || resp?.error;
+      setState(ok ? 'done' : 'error', ok ? 'Captured — opening draft' : `Couldn't capture: ${error || 'unknown error'}`);
+      setTimeout(() => setState('idle', 'Capture to Notespacehub'), ok ? 3000 : 8000);
     },
   );
 }
