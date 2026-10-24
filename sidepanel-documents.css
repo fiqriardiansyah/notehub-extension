@@ -1,0 +1,218 @@
+/*
+ * Styles for the application documents view and its editors
+ * (sidepanel-documents.js). Hand-written rather than Tailwind: sidepanel.css
+ * is compiled from input.css, and these are component styles the utility
+ * classes already in that build don't cover. Colours follow the panel's gray
+ * palette (Tailwind's gray-50…900).
+ */
+
+/* ── Form fields ─────────────────────────────────────────────────────────── */
+
+.doc-input {
+  width: 100%;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  color: #1f2937;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  outline: none;
+  font-family: inherit;
+  resize: vertical;
+  transition: box-shadow 150ms;
+}
+.doc-input::placeholder { color: #9ca3af; }
+.doc-input:focus { box-shadow: 0 0 0 1px #fff, 0 0 0 3px #111827; }
+.doc-autogrow { resize: none; overflow: hidden; }
+
+/* ── Cards ───────────────────────────────────────────────────────────────── */
+
+.doc-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border: 1px solid #f3f4f6;
+  border-radius: 0.75rem;
+  padding: 0.75rem;
+}
+.doc-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; }
+.doc-card-title { font-size: 0.8125rem; font-weight: 600; color: #111827; }
+.doc-card-desc { font-size: 0.6875rem; color: #9ca3af; }
+.doc-muted { font-size: 0.75rem; color: #6b7280; }
+.doc-error { font-size: 0.75rem; color: #dc2626; overflow-wrap: anywhere; }
+.doc-warning { font-size: 0.75rem; color: #b45309; overflow-wrap: anywhere; }
+
+.doc-file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border-radius: 0.5rem;
+  background: #f9fafb;
+  padding: 0.5rem 0.625rem;
+  min-width: 0;
+}
+.doc-file-name { font-size: 0.8125rem; font-weight: 500; color: #111827; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-file-meta { font-size: 0.6875rem; color: #9ca3af; }
+
+.doc-email-preview {
+  font-size: 0.75rem;
+  line-height: 1.125rem;
+  color: #4b5563;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.doc-actions { display: flex; flex-wrap: wrap; gap: 0.375rem; }
+
+.doc-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1rem;
+  padding: 0.375rem 0.625rem;
+  border-radius: 0.5rem;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  color: #374151;
+  cursor: pointer;
+  transition: background-color 150ms, color 150ms;
+  white-space: nowrap;
+}
+.doc-btn:hover:not(:disabled) { background: #f9fafb; color: #111827; }
+.doc-btn:disabled { opacity: 0.5; cursor: default; }
+.doc-btn-primary { background: #111827; border-color: #111827; color: #fff; }
+.doc-btn-primary:hover:not(:disabled) { background: #1f2937; color: #fff; }
+.doc-link {
+  font-size: 0.6875rem;
+  color: #3b82f6;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+}
+.doc-link:hover { color: #2563eb; }
+
+/* ── AI generating placeholder (cf. notehub-app's ai-ghost-block) ───────── */
+
+.doc-generating {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  background: linear-gradient(135deg, #faf5ff 0%, #eff6ff 100%);
+}
+.doc-generating-step {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  background: linear-gradient(90deg, #7c3aed, #2563eb);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.doc-generating-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  background: #8b5cf6;
+  flex-shrink: 0;
+  animation: doc-pulse 1.2s ease-in-out infinite;
+}
+.doc-ghost-line {
+  display: block;
+  height: 0.4375rem;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, #e9d5ff 0%, #dbeafe 50%, #e9d5ff 100%);
+  background-size: 200% 100%;
+  animation: doc-shimmer 1.6s linear infinite;
+}
+@keyframes doc-shimmer { from { background-position: 200% 0; } to { background-position: 0 0; } }
+@keyframes doc-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+
+.doc-reveal { animation: doc-reveal 300ms ease-out; }
+@keyframes doc-reveal { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+/* ── CV editor ───────────────────────────────────────────────────────────── */
+
+.cv-section { display: flex; flex-direction: column; gap: 0.5rem; }
+.cv-section-head { display: flex; align-items: center; justify-content: space-between; }
+.cv-section-title { font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: #6b7280; }
+.cv-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  border: 1px solid #f3f4f6;
+  border-radius: 0.5rem;
+  padding: 0.5rem;
+}
+.cv-entry-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.cv-entry-label { font-size: 0.6875rem; color: #9ca3af; }
+.cv-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.375rem; }
+.cv-remove {
+  font-size: 0.6875rem;
+  color: #9ca3af;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  padding: 0;
+}
+.cv-remove:hover { color: #dc2626; }
+.cv-entry .doc-input { padding: 0.375rem 0.625rem; font-size: 0.8125rem; }
+
+/* ── Email editor: a textarea over a backdrop that highlights placeholders ─ */
+
+.email-template {
+  background: #fef3c7;
+  color: inherit;
+  border-radius: 0.25rem;
+  box-shadow: 0 0 0 1px #fcd34d;
+}
+
+.email-editor { position: relative; }
+.email-editor-layer {
+  font-family: inherit;
+  font-size: 0.875rem;
+  line-height: 1.5rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  letter-spacing: normal;
+  margin: 0;
+  box-sizing: border-box;
+  width: 100%;
+}
+.email-editor-backdrop {
+  position: absolute;
+  inset: 0;
+  color: transparent;
+  pointer-events: none;
+  overflow: hidden;
+}
+.email-editor-input {
+  position: relative;
+  display: block;
+  min-height: 14rem;
+  background: transparent;
+  color: #1f2937;
+  border-color: #e5e7eb;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  transition: box-shadow 150ms;
+}
+.email-editor-input:focus { box-shadow: 0 0 0 1px #fff, 0 0 0 3px #111827; }

@@ -32,6 +32,7 @@ const noteDetailDate = document.getElementById('noteDetailDate');
 const noteDetailLink = document.getElementById('noteDetailLink');
 const noteDetailContent = document.getElementById('noteDetailContent');
 const noteDetailEditorHolder = document.getElementById('noteDetailEditorHolder');
+const noteDetailAttachments = document.getElementById('noteDetailAttachments');
 const noteDetailCopyBtn = document.getElementById('noteDetailCopyBtn');
 const noteDetailEditBtn = document.getElementById('noteDetailEditBtn');
 const viewNoteEdit = document.getElementById('view-note-edit');
@@ -86,6 +87,24 @@ const tabApplicationsBtn = document.getElementById('tabApplicationsBtn');
 const tabNotesBtn = document.getElementById('tabNotesBtn');
 const tabApplications = document.getElementById('tab-applications');
 const tabNotes = document.getElementById('tab-notes');
+const viewCaptureReview = document.getElementById('view-capture-review');
+const captureReviewSaveBtn = document.getElementById('captureReviewSaveBtn');
+const captureReviewError = document.getElementById('captureReviewError');
+const captureReviewLoading = document.getElementById('captureReviewLoading');
+const captureReviewForm = document.getElementById('captureReviewForm');
+const captureReviewCompany = document.getElementById('captureReviewCompany');
+const captureReviewRole = document.getElementById('captureReviewRole');
+const captureReviewStatus = document.getElementById('captureReviewStatus');
+const captureReviewSalary = document.getElementById('captureReviewSalary');
+const captureReviewLocation = document.getElementById('captureReviewLocation');
+const captureReviewJobUrl = document.getElementById('captureReviewJobUrl');
+const captureReviewDescription = document.getElementById('captureReviewDescription');
+const captureReviewDiscardBtn = document.getElementById('captureReviewDiscardBtn');
+const captureReviewOpenAppBtn = document.getElementById('captureReviewOpenAppBtn');
+const captureFitHint = document.getElementById('captureFitHint');
+const captureFitBusy = document.getElementById('captureFitBusy');
+const captureFitRetryBtn = document.getElementById('captureFitRetryBtn');
+const captureFitResult = document.getElementById('captureFitResult');
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let allNotes = [];
@@ -98,6 +117,9 @@ let createEditorInstance = null;
 let editingTodos = [];
 let creatingTodos = [];
 let activeFolder = null;
+let signedIn = false;
+let reviewingDraft = null; // { draftId, redirectUrl } from chrome.storage.session.captureReview
+let viewBeforeReview = null;
 
 // ── Utils ─────────────────────────────────────────────────────────────────────
 function extractText(doc) {
@@ -423,10 +445,12 @@ function showLoggedIn() {
   viewNoteCreate.style.display = 'none';
   viewTodoCreate.style.display = 'none';
   viewLoggedIn.style.display = 'flex';
+  signedIn = true;
   setActiveTab('applications');
   loadNotes();
   refreshCurrentJob();
   loadRecentApplications();
+  syncCaptureReview();
 }
 
 // ── Capture status banner ────────────────────────────────────────────────────
@@ -549,7 +573,9 @@ function captureFromCurrentTab(fields, sourceUrl) {
     { action: 'capture', payload: { source: 'extension-structured', fields, sourceUrl } },
     (resp) => {
       currentTabCaptureBtn.disabled = false;
-      currentTabCaptureLabel.textContent = resp?.success ? 'Captured — opening draft' : "Couldn't capture, try again";
+      currentTabCaptureLabel.textContent = !resp?.success
+        ? "Couldn't capture, try again"
+        : resp.data?.review === 'panel' ? 'Captured' : 'Captured — opening draft';
       // background.js's capture() already put its reason in the banner; this
       // covers the worker not answering at all.
       if (!resp?.success) showPanelError(resp?.error || chrome.runtime.lastError?.message || 'Capture failed');
@@ -566,6 +592,330 @@ function openAppTab(path) {
     else if (!res?.success) showPanelError(res?.error || "Couldn't open Notespacehub");
   });
 }
+
+// ── Capture review ───────────────────────────────────────────────────────────
+// background.js's capture() sets captureReview instead of opening an app tab
+// when this panel is open. The draft is fetched here rather than handed over
+// in storage, so a reopened panel shows its current state — a draft already
+// confirmed or discarded elsewhere (e.g. in the app tab) is just dropped.
+
+const STATUS_LABEL = {
+  SAVED: 'Saved',
+  APPLIED: 'Applied',
+  SCREENING: 'Screening',
+  INTERVIEW: 'Interview',
+  OFFER: 'Offer',
+  REJECTED: 'Rejected',
+};
+
+const ALL_VIEWS = [viewLoggedIn, viewNoteDetail, viewFolder, viewNoteEdit, viewTodoEdit, viewNoteCreate, viewTodoCreate];
+
+function sendMessageAsync(message) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(message, (res) => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else if (res?.success) resolve(res.data);
+      else {
+        const err = new Error(res?.error || 'Request failed');
+        err.status = res?.status;
+        reject(err);
+      }
+    });
+  });
+}
+
+// The view the review interrupted (possibly a half-written note) is hidden,
+// not torn down, and comes back as it was once the review is done.
+function openCaptureReviewView() {
+  if (viewCaptureReview.style.display === 'none') {
+    viewBeforeReview = ALL_VIEWS.find((v) => v.style.display !== 'none') || viewLoggedIn;
+  }
+  ALL_VIEWS.forEach((v) => (v.style.display = 'none'));
+  viewCaptureReview.style.display = 'flex';
+}
+
+function closeCaptureReviewView() {
+  reviewingDraft = null;
+  cancelJobFit();
+  if (viewCaptureReview.style.display === 'none') return;
+  viewCaptureReview.style.display = 'none';
+  (viewBeforeReview || viewLoggedIn).style.display = 'flex';
+  viewBeforeReview = null;
+}
+
+function setCaptureReviewError(message) {
+  captureReviewError.textContent = message || '';
+  captureReviewError.style.display = message ? 'block' : 'none';
+}
+
+function setCaptureReviewBusy(busy, saveLabel = 'Save') {
+  captureReviewSaveBtn.disabled = busy;
+  captureReviewDiscardBtn.disabled = busy;
+  captureReviewSaveBtn.textContent = saveLabel;
+}
+
+// Mirrors notehub-app's captureDraftToInitialValues + the create form's
+// "APPLIED unless that stage is turned off" default.
+function fillCaptureReviewForm(draft, stages) {
+  const fields = draft.parsedFields || {};
+  const active = stages ? stages.filter((s) => s.isActive).map((s) => s.status) : Object.keys(STATUS_LABEL);
+  const statuses = active.length ? active : Object.keys(STATUS_LABEL);
+  captureReviewStatus.innerHTML = statuses
+    .map((s) => `<option value="${esc(s)}">${esc(STATUS_LABEL[s] || s)}</option>`)
+    .join('');
+  captureReviewStatus.value = statuses.includes('APPLIED') ? 'APPLIED' : statuses[0];
+
+  captureReviewCompany.value = fields.company || '';
+  captureReviewRole.value = fields.title || '';
+  captureReviewLocation.value = fields.location || '';
+  captureReviewSalary.value = fields.salary || '';
+  captureReviewJobUrl.value = fields.url || draft.sourceUrl || '';
+  captureReviewDescription.value = fields.description || '';
+}
+
+async function showCaptureReview(review) {
+  reviewingDraft = review;
+  openCaptureReviewView();
+  setCaptureReviewError('');
+  setCaptureReviewBusy(true);
+  captureReviewForm.style.display = 'none';
+  captureReviewLoading.style.display = 'flex';
+
+  try {
+    const { draft, stages } = await sendMessageAsync({ action: 'fetchCaptureReview', draftId: review.draftId });
+    if (reviewingDraft?.draftId !== review.draftId) return; // superseded meanwhile
+    if (draft.status !== 'draft') {
+      chrome.storage.session.remove('captureReview');
+      return;
+    }
+    fillCaptureReviewForm(draft, stages);
+    captureReviewLoading.style.display = 'none';
+    captureReviewForm.style.display = 'flex';
+    setCaptureReviewBusy(false);
+    captureReviewRole.focus();
+    resetJobFit();
+    scheduleJobFit(true);
+  } catch (err) {
+    if (reviewingDraft?.draftId !== review.draftId) return;
+    captureReviewLoading.style.display = 'none';
+    setCaptureReviewError(`Couldn't load the captured job: ${err.message}`);
+    captureReviewDiscardBtn.disabled = false;
+  }
+}
+
+function syncCaptureReview() {
+  chrome.storage.session.get('captureReview', (res) => {
+    if (res.captureReview) showCaptureReview(res.captureReview);
+  });
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'session' || !changes.captureReview || !signedIn) return;
+  const review = changes.captureReview.newValue;
+  if (review) showCaptureReview(review);
+  else closeCaptureReviewView();
+});
+
+captureReviewForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  captureReviewSaveBtn.click();
+});
+
+captureReviewSaveBtn.addEventListener('click', async () => {
+  if (!reviewingDraft) return;
+  const application = {
+    company: captureReviewCompany.value.trim(),
+    role: captureReviewRole.value.trim(),
+    status: captureReviewStatus.value,
+    location: captureReviewLocation.value.trim(),
+    salaryRange: captureReviewSalary.value.trim(),
+    jobUrl: captureReviewJobUrl.value.trim(),
+    jobDescription: captureReviewDescription.value.trim(),
+  };
+  if (!application.company || !application.role) {
+    setCaptureReviewError('Company and role are required.');
+    (application.company ? captureReviewRole : captureReviewCompany).focus();
+    return;
+  }
+
+  setCaptureReviewError('');
+  setCaptureReviewBusy(true, 'Saving…');
+  try {
+    // background.js has already started the tailored CV and the email for
+    // it; the documents view picks those jobs up.
+    const created = await sendMessageAsync({ action: 'confirmCaptureDraft', draftId: reviewingDraft.draftId, application });
+    closeCaptureReviewView();
+    await chrome.storage.session.remove('captureReview');
+    showApplicationDocuments(created);
+  } catch (err) {
+    setCaptureReviewBusy(false);
+    setCaptureReviewError(err.message || 'Save failed');
+  }
+});
+
+captureReviewDiscardBtn.addEventListener('click', async () => {
+  if (!reviewingDraft) return;
+  setCaptureReviewBusy(true);
+  try {
+    await sendMessageAsync({ action: 'discardCaptureDraft', draftId: reviewingDraft.draftId });
+  } catch (err) {
+    // 404: already confirmed or discarded elsewhere — nothing left to discard.
+    if (err.status !== 404) {
+      setCaptureReviewBusy(false);
+      setCaptureReviewError(`Couldn't discard: ${err.message}`);
+      return;
+    }
+  }
+  chrome.storage.session.remove('captureReview');
+});
+
+// ── Profile fit (capture review) ─────────────────────────────────────────────
+// The panel's copy of notehub-app's JobFitCheck: scores the Master Profile
+// against the job in the form via /ai/job-fit/analyze. Runs by itself once
+// there's a description, and again after the description stops changing —
+// edits to company/role/location are sent as context but don't trigger a new
+// AI call. Nothing is saved.
+
+const FIT_MIN_DESCRIPTION_LENGTH = 50; // shorter is a stub, not worth an AI call
+const FIT_TYPING_PAUSE_MS = 1500;
+const FIT_MAX_DESCRIPTION_LENGTH = 20000; // AnalyzeJobFitDto's limit
+const FIT_RING_SIZE = 48;
+const FIT_RING_STROKE = 5;
+
+let fitTimer = null;
+let fitRequestId = 0; // bumped per run/cancel so a stale reply is ignored
+let fitDescription = null; // the description the result on screen is (being) computed for
+
+function fitTone(score) {
+  if (score >= 75) return { color: '#10b981', label: 'Strong fit' };
+  if (score >= 50) return { color: '#f59e0b', label: 'Partial fit' };
+  return { color: '#f43f5e', label: 'Weak fit' };
+}
+
+function setFitBusy(busy) {
+  captureFitBusy.style.display = busy ? 'flex' : 'none';
+  captureFitRetryBtn.style.display = !busy && fitDescription !== null ? 'inline-block' : 'none';
+  captureFitResult.style.opacity = busy ? '0.5' : '1';
+}
+
+function setFitHint(text) {
+  captureFitHint.textContent = text || '';
+  captureFitHint.style.display = text ? 'block' : 'none';
+}
+
+function cancelJobFit() {
+  clearTimeout(fitTimer);
+  fitRequestId++;
+}
+
+function resetJobFit() {
+  cancelJobFit();
+  fitDescription = null;
+  captureFitResult.innerHTML = '';
+  captureFitResult.style.display = 'none';
+  captureFitRetryBtn.textContent = 'Recalculate';
+  setFitHint('');
+  setFitBusy(false);
+}
+
+function renderFitResult(result) {
+  const tone = fitTone(result.score);
+  const r = (FIT_RING_SIZE - FIT_RING_STROKE) / 2;
+  const circumference = 2 * Math.PI * r;
+  const c = FIT_RING_SIZE / 2;
+  const missing = Array.isArray(result.missing) ? result.missing : [];
+
+  captureFitResult.innerHTML = `
+    <div class="flex items-center gap-3">
+      <div class="relative shrink-0" style="width:${FIT_RING_SIZE}px;height:${FIT_RING_SIZE}px">
+        <svg width="${FIT_RING_SIZE}" height="${FIT_RING_SIZE}" style="transform:rotate(-90deg)">
+          <circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="#e5e7eb" stroke-width="${FIT_RING_STROKE}" />
+          <circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="${tone.color}" stroke-width="${FIT_RING_STROKE}"
+            stroke-linecap="round" stroke-dasharray="${circumference}" stroke-dashoffset="${circumference * (1 - result.score / 100)}" />
+        </svg>
+        <div class="absolute flex items-center justify-center text-xs font-semibold text-gray-900" style="inset:0">${esc(result.score)}%</div>
+      </div>
+      <div class="flex flex-col gap-0.5 min-w-0">
+        <p class="text-sm font-medium text-gray-900">${esc(tone.label)}</p>
+        ${result.summary ? `<p class="text-xs text-gray-500">${esc(result.summary)}</p>` : ''}
+      </div>
+    </div>
+    ${
+      missing.length
+        ? `<p class="text-xs font-medium text-gray-900">Missing from your profile</p>
+           ${missing
+             .map(
+               (group) => `
+             <div class="flex flex-col gap-1">
+               <p class="text-[11px] text-gray-500">${esc(group.category)}</p>
+               <div class="flex flex-wrap gap-1">
+                 ${(group.items || [])
+                   .map(
+                     (item) =>
+                       `<span class="rounded-md px-2 py-0.5 text-[11px]" style="border:1px solid #fecdd3;background:#fff1f2;color:#be123c">${esc(item)}</span>`,
+                   )
+                   .join('')}
+               </div>
+             </div>`,
+             )
+             .join('')}`
+        : `<p class="text-xs font-medium" style="color:#059669">Your profile covers everything this job asks for</p>`
+    }`;
+  captureFitResult.style.display = 'flex';
+}
+
+async function runJobFit(description) {
+  clearTimeout(fitTimer);
+  const id = ++fitRequestId;
+  fitDescription = description;
+  setFitHint('');
+  setFitBusy(true);
+  try {
+    const result = await sendMessageAsync({
+      action: 'analyzeJobFit',
+      input: {
+        jobDescription: description.slice(0, FIT_MAX_DESCRIPTION_LENGTH),
+        company: captureReviewCompany.value.trim() || undefined,
+        role: captureReviewRole.value.trim() || undefined,
+        location: captureReviewLocation.value.trim() || undefined,
+      },
+    });
+    if (id !== fitRequestId) return;
+    renderFitResult(result);
+    captureFitRetryBtn.textContent = 'Recalculate';
+  } catch (err) {
+    if (id !== fitRequestId) return;
+    // The API's own reason, e.g. a rejected AI key or an empty Master Profile.
+    setFitHint(`Couldn't calculate the fit: ${err.message}`);
+    captureFitRetryBtn.textContent = 'Try again';
+  }
+  setFitBusy(false);
+}
+
+// immediate: a description that's there on load has nothing to wait for.
+function scheduleJobFit(immediate) {
+  clearTimeout(fitTimer);
+  const description = captureReviewDescription.value.trim();
+  if (description.length < FIT_MIN_DESCRIPTION_LENGTH) {
+    resetJobFit();
+    setFitHint('Add the job description to see how well your Master Profile matches this job.');
+    return;
+  }
+  if (description === fitDescription) return;
+  setFitBusy(true);
+  fitTimer = setTimeout(() => runJobFit(description), immediate ? 0 : FIT_TYPING_PAUSE_MS);
+}
+
+captureReviewDescription.addEventListener('input', () => scheduleJobFit(false));
+captureFitRetryBtn.addEventListener('click', () => runJobFit(captureReviewDescription.value.trim()));
+
+// Hands the still-pending draft to the app's full form (job portal picker,
+// dates…); the app discards it if the user backs out there.
+captureReviewOpenAppBtn.addEventListener('click', () => {
+  if (!reviewingDraft) return;
+  openAppTab(reviewingDraft.redirectUrl);
+  chrome.storage.session.remove('captureReview');
+});
 
 // ── Recent applications ──────────────────────────────────────────────────────
 
@@ -608,9 +958,12 @@ async function loadRecentApplications() {
         </tr>`,
       )
       .join('');
+    // The application's documents open right here (sidepanel-documents.js);
+    // that view links on to the full page in the app.
     applicationsList.querySelectorAll('.app-row').forEach((row) => {
       row.addEventListener('click', () => {
-        openAppTab(`/applications/${row.dataset.id}`);
+        const app = applications.find((a) => a.id === row.dataset.id);
+        if (app) showApplicationDocuments(app);
       });
     });
     applicationsTableWrap.style.display = 'block';
@@ -654,7 +1007,12 @@ function showLoggedOut() {
   viewNoteDetail.style.display = 'none';
   viewNoteCreate.style.display = 'none';
   viewTodoCreate.style.display = 'none';
+  viewCaptureReview.style.display = 'none';
+  ALL_VIEWS.forEach((v) => (v.style.display = 'none'));
   viewLoggedOut.style.display = 'flex';
+  signedIn = false;
+  reviewingDraft = null;
+  viewBeforeReview = null;
 }
 
 // Same fix as notehub-app's editor-tools.ts: editorjs-button leaves its (hidden)
@@ -790,6 +1148,66 @@ async function showNoteDetail(item) {
     }
     noteDetailContent.innerHTML = html;
   }
+
+  renderNoteAttachments(item);
+}
+
+// Same rule as notehub-app's getFileUrl: entries saved now carry an R2 key,
+// older ones a full url. Anything that isn't http(s) is dropped so a stored
+// value can't become a javascript: href.
+function getFileUrl(file) {
+  const url = file?.key ? `${R2_PUBLIC_URL}/${file.key}` : file?.url || '';
+  return /^https?:\/\//.test(url) ? url : '';
+}
+
+// Images/files added through the app's attach button live in the note's
+// imagesUrl/filesUrl columns, not in its EditorJS blocks, so the read-only
+// editor never shows them. Rendered below it the way the app's note view
+// lists them: an image grid, then the files.
+function renderNoteAttachments(item) {
+  noteDetailAttachments.replaceChildren();
+  const images = item.isSecure ? [] : (item.imagesUrl || []).filter(getFileUrl);
+  const files = item.isSecure ? [] : (item.filesUrl || []).filter(getFileUrl);
+  noteDetailAttachments.style.display = images.length || files.length ? 'flex' : 'none';
+
+  if (images.length) {
+    const grid = document.createElement('div');
+    grid.className = 'grid grid-cols-2 gap-2';
+    images.forEach((image) => {
+      const link = document.createElement('a');
+      link.href = getFileUrl(image);
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.title = image.name || '';
+      link.className = 'block overflow-hidden rounded-lg border border-gray-200';
+      const img = document.createElement('img');
+      img.src = link.href;
+      img.alt = image.name || 'image';
+      img.loading = 'lazy';
+      img.className = 'w-full';
+      img.style.cssText = 'height:96px;object-fit:cover;display:block';
+      link.appendChild(img);
+      grid.appendChild(link);
+    });
+    noteDetailAttachments.appendChild(grid);
+  }
+
+  files.forEach((file) => {
+    const link = document.createElement('a');
+    link.href = getFileUrl(file);
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.className = 'flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-100 transition-colors';
+    link.innerHTML = `
+      <svg class="w-4 h-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+      </svg>
+      <span class="text-xs font-medium text-gray-700 truncate flex-1 min-w-0"></span>
+      ${file.sizeInMb ? '<span class="text-[11px] text-gray-400 shrink-0"></span>' : ''}`;
+    link.querySelector('span').textContent = file.name || 'File';
+    if (file.sizeInMb) link.querySelectorAll('span')[1].textContent = `${file.sizeInMb} MB`;
+    noteDetailAttachments.appendChild(link);
+  });
 }
 
 async function showFolderView(item) {

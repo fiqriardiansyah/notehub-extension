@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>NoteHub</title>
   <link rel="stylesheet" href="sidepanel.css" />
+  <link rel="stylesheet" href="sidepanel-documents.css" />
 </head>
 <body class="w-full h-screen min-h-screen font-sans bg-white text-gray-900 overflow-hidden">
 
@@ -190,6 +191,7 @@
     <div class="flex-1 min-h-0 overflow-y-auto px-4 py-3">
       <div id="noteDetailContent" class="text-sm text-gray-800 leading-relaxed note-content"></div>
       <div id="noteDetailEditorHolder" style="display:none"></div>
+      <div id="noteDetailAttachments" class="flex flex-col gap-2" style="display:none;margin-top:12px"></div>
     </div>
 
   </div>
@@ -339,6 +341,178 @@
 
   </div>
 
+  <!-- Capture review: a captured job confirmed right here instead of in the app's /applications/new -->
+  <div id="view-capture-review" class="flex flex-col w-full h-screen" style="display:none">
+
+    <!-- Header -->
+    <div class="flex items-center gap-2 px-4 py-3 border-b border-gray-100 shrink-0">
+      <h2 class="text-sm font-semibold text-gray-900 truncate flex-1 min-w-0">Review captured job</h2>
+      <button id="captureReviewSaveBtn" class="text-xs font-medium text-white bg-gray-900 px-3 py-1.5 rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer shrink-0">Save</button>
+    </div>
+
+    <!-- Load / save error -->
+    <p id="captureReviewError" class="px-4 pt-2 text-xs text-red-500" style="display:none"></p>
+
+    <div id="captureReviewLoading" class="flex items-center justify-center h-40">
+      <div class="w-4 h-4 border-2 border-gray-200 border-t-gray-700 rounded-full animate-spin"></div>
+    </div>
+
+    <form id="captureReviewForm" class="flex flex-col gap-3 flex-1 min-h-0 overflow-y-auto px-4 py-3" style="display:none">
+      <label class="flex flex-col gap-1">
+        <span class="text-xs font-medium text-gray-500">Company *</span>
+        <input id="captureReviewCompany" type="text" placeholder="Acme Inc." class="w-full text-sm text-gray-800 bg-white border border-gray-200 rounded-lg px-3 py-2 outline-none placeholder-gray-400 focus:ring-2 focus:ring-gray-900 focus:ring-offset-1 transition-shadow" />
+      </label>
+      <label class="flex flex-col gap-1">
+        <span class="text-xs font-medium text-gray-500">Role *</span>
+        <input id="captureReviewRole" type="text" placeholder="Frontend Engineer" class="w-full text-sm text-gray-800 bg-white border border-gray-200 rounded-lg px-3 py-2 outline-none placeholder-gray-400 focus:ring-2 focus:ring-gray-900 focus:ring-offset-1 transition-shadow" />
+      </label>
+      <div class="grid grid-cols-2 gap-2">
+        <label class="flex flex-col gap-1 min-w-0">
+          <span class="text-xs font-medium text-gray-500">Status</span>
+          <select id="captureReviewStatus" class="w-full text-sm text-gray-800 bg-white border border-gray-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-gray-900 focus:ring-offset-1 transition-shadow"></select>
+        </label>
+        <label class="flex flex-col gap-1 min-w-0">
+          <span class="text-xs font-medium text-gray-500">Salary</span>
+          <input id="captureReviewSalary" type="text" placeholder="$100k – $120k" class="w-full text-sm text-gray-800 bg-white border border-gray-200 rounded-lg px-3 py-2 outline-none placeholder-gray-400 focus:ring-2 focus:ring-gray-900 focus:ring-offset-1 transition-shadow" />
+        </label>
+      </div>
+      <label class="flex flex-col gap-1">
+        <span class="text-xs font-medium text-gray-500">Location</span>
+        <input id="captureReviewLocation" type="text" placeholder="Remote" class="w-full text-sm text-gray-800 bg-white border border-gray-200 rounded-lg px-3 py-2 outline-none placeholder-gray-400 focus:ring-2 focus:ring-gray-900 focus:ring-offset-1 transition-shadow" />
+      </label>
+      <label class="flex flex-col gap-1">
+        <span class="text-xs font-medium text-gray-500">Job URL</span>
+        <input id="captureReviewJobUrl" type="text" placeholder="https://…" class="w-full text-sm text-gray-800 bg-white border border-gray-200 rounded-lg px-3 py-2 outline-none placeholder-gray-400 focus:ring-2 focus:ring-gray-900 focus:ring-offset-1 transition-shadow" />
+      </label>
+      <label class="flex flex-col gap-1">
+        <span class="text-xs font-medium text-gray-500">Job description</span>
+        <textarea id="captureReviewDescription" rows="6" class="w-full text-sm text-gray-800 bg-white border border-gray-200 rounded-lg px-3 py-2 outline-none placeholder-gray-400 focus:ring-2 focus:ring-gray-900 focus:ring-offset-1 transition-shadow"></textarea>
+      </label>
+
+      <!-- Profile fit: same AI check as the app's Add Application form (JobFitCheck) -->
+      <section class="flex flex-col gap-2 rounded-lg p-3 shrink-0" style="background:#f9fafb">
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex flex-col min-w-0">
+            <span class="text-xs font-semibold text-gray-900">Profile fit</span>
+            <span id="captureFitHint" class="text-[11px] text-gray-400" style="overflow-wrap:anywhere"></span>
+          </div>
+          <span id="captureFitBusy" class="flex items-center gap-1 text-[11px] text-gray-500 shrink-0" style="display:none">
+            <span class="w-3 h-3 border-2 border-gray-200 border-t-gray-700 rounded-full animate-spin"></span>
+            Calculating…
+          </span>
+          <button id="captureFitRetryBtn" type="button" class="text-[11px] text-blue-500 hover:text-blue-600 transition-colors cursor-pointer shrink-0" style="display:none">Recalculate</button>
+        </div>
+        <div id="captureFitResult" class="flex flex-col gap-2" style="display:none;transition:opacity 150ms"></div>
+      </section>
+    </form>
+
+    <!-- Footer -->
+    <div class="flex items-center justify-between gap-2 px-4 py-3 border-t border-gray-100 shrink-0">
+      <button id="captureReviewDiscardBtn" type="button" class="text-xs text-gray-400 hover:text-gray-600 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-default">Discard</button>
+      <button id="captureReviewOpenAppBtn" type="button" class="text-[11px] text-blue-500 hover:text-blue-600 transition-colors cursor-pointer">More options in Notespacehub →</button>
+    </div>
+
+  </div>
+
+  <!-- Application documents: the Docs tab of an application, opened from the
+       recent-applications list or right after saving a captured job -->
+  <div id="view-app-docs" class="flex flex-col w-full h-screen" style="display:none">
+    <div class="flex items-center gap-2 px-4 py-3 border-b border-gray-100 shrink-0">
+      <button id="appDocsBackBtn" class="p-1 -ml-1 text-gray-500 hover:text-gray-700 transition-colors cursor-pointer shrink-0" title="Back">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+        </svg>
+      </button>
+      <div class="flex flex-col flex-1 min-w-0">
+        <h2 id="appDocsRole" class="text-sm font-semibold text-gray-900 truncate"></h2>
+        <p id="appDocsCompany" class="text-xs text-gray-500 truncate"></p>
+      </div>
+      <button id="appDocsOpenAppBtn" class="text-[11px] text-blue-500 hover:text-blue-600 transition-colors cursor-pointer shrink-0">Open details →</button>
+    </div>
+    <div id="appDocsBody" class="flex flex-col gap-3 flex-1 min-h-0 overflow-y-auto px-4 py-3"></div>
+  </div>
+
+  <!-- Tailored CV editor -->
+  <div id="view-cv-edit" class="flex flex-col w-full h-screen" style="display:none">
+    <div class="flex items-center gap-2 px-4 py-3 border-b border-gray-100 shrink-0">
+      <button id="cvEditBackBtn" class="p-1 -ml-1 text-gray-500 hover:text-gray-700 transition-colors cursor-pointer shrink-0" title="Back">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+        </svg>
+      </button>
+      <h2 class="text-sm font-semibold text-gray-900 truncate flex-1 min-w-0">Edit tailored CV</h2>
+      <button id="cvEditSaveBtn" class="text-xs font-medium text-white bg-gray-900 px-3 py-1.5 rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer shrink-0">Save</button>
+    </div>
+    <p id="cvEditError" class="px-4 pt-2 text-xs text-red-500" style="display:none"></p>
+    <div id="cvEditBody" class="flex flex-col gap-3flex-1 min-h-0 overflow-y-auto px-4 py-3"></div>
+  </div>
+
+  <!-- Cover letter editor -->
+  <div id="view-cl-edit" class="flex flex-col w-full h-screen" style="display:none">
+    <div class="flex items-center gap-2 px-4 py-3 border-b border-gray-100 shrink-0">
+      <button id="clEditBackBtn" class="p-1 -ml-1 text-gray-500 hover:text-gray-700 transition-colors cursor-pointer shrink-0" title="Back">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+        </svg>
+      </button>
+      <h2 class="text-sm font-semibold text-gray-900 truncate flex-1 min-w-0">Edit cover letter</h2>
+      <button id="clEditSaveBtn" class="text-xs font-medium text-white bg-gray-900 px-3 py-1.5 rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer shrink-0">Save</button>
+    </div>
+    <p id="clEditError" class="px-4 pt-2 text-xs text-red-500" style="display:none"></p>
+    <div class="flex flex-col gap-3 flex-1 min-h-0 overflow-y-auto px-4 py-3">
+      <label class="flex flex-col gap-1">
+        <span class="text-xs font-medium text-gray-500">Salutation</span>
+        <input id="clEditSalutation" type="text" placeholder="Dear Hiring Manager," class="doc-input" />
+      </label>
+      <label class="flex flex-col gap-1">
+        <span class="text-xs font-medium text-gray-500">Letter</span>
+        <textarea id="clEditBodyInput" rows="14" class="doc-input doc-autogrow"></textarea>
+        <span class="text-[11px] text-gray-400">A blank line starts a new paragraph. **bold** and _italic_ work.</span>
+      </label>
+      <label class="flex flex-col gap-1">
+        <span class="text-xs font-medium text-gray-500">Closing</span>
+        <textarea id="clEditClosing" rows="3" class="doc-input doc-autogrow" placeholder="Sincerely,&#10;Jane Doe"></textarea>
+      </label>
+    </div>
+  </div>
+
+  <!-- Email Apply editor -->
+  <div id="view-email-edit" class="flex flex-col w-full h-screen" style="display:none">
+    <div class="flex items-center gap-2 px-4 py-3 border-b border-gray-100 shrink-0">
+      <button id="emailEditBackBtn" class="p-1 -ml-1 text-gray-500 hover:text-gray-700 transition-colors cursor-pointer shrink-0" title="Back">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+        </svg>
+      </button>
+      <h2 class="text-sm font-semibold text-gray-900 truncate flex-1 min-w-0">Email Apply</h2>
+      <button id="emailEditSaveBtn" class="text-xs font-medium text-white bg-gray-900 px-3 py-1.5 rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer shrink-0">Save</button>
+    </div>
+    <p id="emailEditError" class="px-4 pt-2 text-xs text-red-500" style="display:none"></p>
+    <div class="flex flex-col gap-3 flex-1 min-h-0 overflow-y-auto px-4 py-3">
+      <p class="text-[11px] text-gray-500">
+        Click a highlighted <mark class="email-template">[Placeholder]</mark> to replace it with your own details, or press Tab to jump to the next one.
+      </p>
+      <label class="flex flex-col gap-1">
+        <span class="flex items-center justify-between text-xs font-medium text-gray-500">
+          Subject
+          <button id="emailEditCopySubjectBtn" type="button" class="text-[11px] text-blue-500 hover:text-blue-600 transition-colors cursor-pointer">Copy</button>
+        </span>
+        <input id="emailEditSubject" type="text" placeholder="Application for …" class="doc-input" />
+      </label>
+      <div class="flex flex-col gap-1">
+        <span class="flex items-center justify-between text-xs font-medium text-gray-500">
+          Email
+          <button id="emailEditCopyBodyBtn" type="button" class="text-[11px] text-blue-500 hover:text-blue-600 transition-colors cursor-pointer">Copy</button>
+        </span>
+        <div class="email-editor">
+          <div id="emailEditBackdrop" class="email-editor-layer email-editor-backdrop" aria-hidden="true"></div>
+          <textarea id="emailEditBodyInput" class="email-editor-layer email-editor-input" spellcheck="true"></textarea>
+        </div>
+        <span id="emailEditHint" class="text-[11px]"></span>
+      </div>
+    </div>
+  </div>
+
   <script src="config.js"></script>
   <script src="purify.min.js"></script>
   <script src="editorjs.umd.js"></script>
@@ -357,5 +531,6 @@
   <script src="editorjs-inline-image.umd.js"></script>
   <script src="editorjs-image.umd.js"></script>
   <script src="sidepanel.js"></script>
+  <script src="sidepanel-documents.js"></script>
 </body>
 </html>

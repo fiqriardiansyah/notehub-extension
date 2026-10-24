@@ -125,7 +125,8 @@ function onCapture() {
       // The API's reason (e.g. an expired AI key) — left up longer than a
       // success so it can actually be read.
       const error = chrome.runtime.lastError?.message || resp?.error;
-      setState(ok ? 'done' : 'error', ok ? 'Captured — opening draft' : `Couldn't capture: ${error || 'unknown error'}`);
+      const done = resp?.data?.review === 'panel' ? 'Captured — review it in the side panel' : 'Captured — opening draft';
+      setState(ok ? 'done' : 'error', ok ? done : `Couldn't capture: ${error || 'unknown error'}`);
       setTimeout(() => setState('idle', 'Capture to Notespacehub'), ok ? 3000 : 8000);
     },
   );

@@ -195,8 +195,18 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     setCaptureStatus('error', 'Nothing selected — highlight the job text first, then capture.');
     return;
   }
-  capture({ source: 'extension-selection', text, sourceUrl: tab?.url || '' }).catch(() => {});
+  capture({ source: 'extension-selection', text, sourceUrl: tab?.url || '' }, tab?.windowId).catch(() => {});
 });
+
+// A capture made while the side panel is open in that window is reviewed
+// right there instead of in a new app tab. getContexts is Chrome 116+; older
+// Chrome falls back to the app tab. windowId is unknown for a capture started
+// from the panel itself, which by definition is open.
+async function isSidePanelOpen(windowId) {
+  if (!chrome.runtime.getContexts) return false;
+  const panels = await chrome.runtime.getContexts({ contextTypes: ['SIDE_PANEL'] });
+  return panels.some((c) => windowId == null || c.windowId === windowId || c.windowId === -1);
+}
 
 // Mirrored into chrome.storage.session so the side panel can show a loading
 // banner for every capture trigger (button, right-click selection, LinkedIn
@@ -206,7 +216,7 @@ function setCaptureStatus(status, message) {
   return chrome.storage.session.set({ captureStatus: status, captureMessage: message || '' });
 }
 
-async function capture(payload) {
+async function capture(payload, windowId) {
   const body = { source: payload.source, sourceUrl: payload.sourceUrl || '' };
   if (payload.source === 'extension-structured') body.fields = payload.fields;
   if (payload.source === 'extension-selection') body.text = payload.text;
@@ -229,6 +239,13 @@ async function capture(payload) {
 
   const result = await res.json();
   const data = result.data || result;
+
+  if (await isSidePanelOpen(windowId)) {
+    await reviewInPanel(data);
+    await setCaptureStatus('success', 'Draft ready — review it below');
+    return { ...data, review: 'panel' };
+  }
+
   try {
     await openOrFocusAppTab(data.redirectUrl);
   } catch (err) {
@@ -237,6 +254,184 @@ async function capture(payload) {
   notify('Draft ready', 'Review and confirm it in the app tab.');
   await setCaptureStatus('success', 'Draft ready — opening app tab');
   return data;
+}
+
+// The panel watches captureReview in chrome.storage.session (same reason as
+// captureStatus: it may be rebuilt mid-capture) and fetches the draft itself.
+// Only one draft is reviewed at a time — a newer capture replaces the pending
+// one, which is discarded the same way the app's confirm page discards a
+// draft the user backs out of. A 404 there just means it was already
+// confirmed or discarded elsewhere.
+async function reviewInPanel(data) {
+  const { captureReview: previous } = await chrome.storage.session.get('captureReview');
+  if (previous?.draftId && previous.draftId !== data.draftId) {
+    apiFetch(`/application/capture/${previous.draftId}`, { method: 'DELETE' }).catch(() => {});
+  }
+  await chrome.storage.session.set({ captureReview: { draftId: data.draftId, redirectUrl: data.redirectUrl } });
+}
+
+// Stage settings are best-effort: without them the panel offers every status,
+// and the API still rejects one the user turned off.
+async function fetchCaptureReview(draftId) {
+  const [draft, stages] = await Promise.all([
+    apiFetchJson(`/application/capture/${encodeURIComponent(draftId)}`),
+    apiFetchJson('/application-stage').catch(() => null),
+  ]);
+  return { draft, stages };
+}
+
+// The app's form auto-picks the job portal from the Job URL (find-or-create
+// via /job-portal/resolve); the panel has no portal picker, so the same
+// lookup runs once at save time. A failed lookup just saves without one.
+async function resolveJobPortalId(url) {
+  if (!url?.trim()) return null;
+  try {
+    const portal = await apiFetchJson('/job-portal/resolve', { method: 'POST', body: JSON.stringify({ url: url.trim() }) });
+    return portal?.id || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function confirmCaptureDraft(draftId, application) {
+  const jobPortalId = await resolveJobPortalId(application.jobUrl);
+  const created = await apiFetchJson('/application', {
+    method: 'POST',
+    body: JSON.stringify({ ...application, jobPortalId, fromDraftId: draftId }),
+  });
+  await setCaptureStatus('success', `Saved ${created.role || 'application'} at ${created.company || 'company'}`);
+  await startDocuments(created.id, ['cv', 'email']);
+  return created;
+}
+
+// ── Application documents ──────────────────────────────────────────────────
+
+// The panel's documents view (sidepanel-documents.js) reads and edits CV
+// versions, cover letters, the email, files and the portfolio summary — a
+// dozen endpoints that need nothing beyond apiFetchJson, so they share the
+// 'api' proxy action instead of a handler apiece. A PDF can't cross
+// sendMessage as a Blob, so it comes back as a data: URL.
+async function fetchPdfDataUrl(path) {
+  const res = await apiFetch(path);
+  if (!res.ok) throw await errorFromResponse(res);
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return `data:application/pdf;base64,${btoa(binary)}`;
+}
+
+// Generation jobs. Saving a captured job in the panel starts the tailored CV
+// and the email right away, and the documents view can (re)generate any of
+// the three. A job runs here rather than in the panel so closing the panel
+// doesn't lose a CV half-way. Its state lives in chrome.storage.session under
+// one key per job (docJob:<applicationId>:<kind>), so jobs running side by
+// side never overwrite each other's state.
+//
+// Each generator does what the app does across its AI dialog + editor
+// (GenerateAiDialog -> createCvDraft -> CvBuilderView save, etc.), minus the
+// review step: the result is saved straight away and edited afterwards.
+const MIN_COMPLETION_TO_GENERATE = 80; // notehub-app's DocumentsTab gate
+
+async function saveIntoDraft(draftPath, updatePath, applicationId, data) {
+  const draft = await apiFetchJson(draftPath, { method: 'POST', body: JSON.stringify({ applicationId }) });
+  try {
+    await apiFetchJson(`${updatePath}/${draft.id}`, { method: 'PUT', body: JSON.stringify({ data }) });
+  } catch (err) {
+    // A blank draft left behind would show up as "the" tailored document.
+    apiFetch(`${updatePath}/${draft.id}`, { method: 'DELETE' }).catch(() => {});
+    throw err;
+  }
+}
+
+const DOC_GENERATORS = {
+  // `tailoring` comes back beside the schema but isn't part of a CV.
+  cv: async (applicationId) => {
+    const { tailoring: _tailoring, ...schema } = await apiFetchJson('/ai/cv/generate', {
+      method: 'POST',
+      body: JSON.stringify({ applicationId, mode: 'complete' }),
+    });
+    await saveIntoDraft('/cv-version/draft', '/cv-version', applicationId, schema);
+  },
+  coverLetter: async (applicationId) => {
+    const schema = await apiFetchJson('/ai/cover-letter/generate', {
+      method: 'POST',
+      body: JSON.stringify({ applicationId }),
+    });
+    await saveIntoDraft('/cover-letter/draft', '/cover-letter', applicationId, schema);
+  },
+  email: async (applicationId) => {
+    const { subject, body } = await apiFetchJson('/ai/application-email/generate', {
+      method: 'POST',
+      body: JSON.stringify({ applicationId }),
+    });
+    await apiFetchJson('/application-email', { method: 'PUT', body: JSON.stringify({ applicationId, subject, body }) });
+  },
+};
+
+// The app only enforces this in its UI, so the same gate is checked here.
+async function assertProfileReady() {
+  const profile = await apiFetchJson('/profile');
+  const percentage = profile?.completion?.percentage ?? 0;
+  if (percentage < MIN_COMPLETION_TO_GENERATE) {
+    const err = new Error(
+      `Complete your Master Profile to at least ${MIN_COMPLETION_TO_GENERATE}% (currently ${percentage}%) to generate with AI.`,
+    );
+    err.code = 'PROFILE_INCOMPLETE';
+    throw err;
+  }
+}
+
+// An idle worker is stopped after 30s even with a fetch in flight, and an AI
+// call can take longer than that. Any extension API call resets the idle
+// timer, so one is made every 20s while a job runs.
+let runningDocJobs = 0;
+let keepAliveTimer = null;
+function holdWorker(delta) {
+  runningDocJobs += delta;
+  if (runningDocJobs > 0 && !keepAliveTimer) {
+    keepAliveTimer = setInterval(() => chrome.runtime.getPlatformInfo(), 20000);
+  } else if (runningDocJobs === 0 && keepAliveTimer) {
+    clearInterval(keepAliveTimer);
+    keepAliveTimer = null;
+  }
+}
+
+function setDocJob(applicationId, kind, state) {
+  return chrome.storage.session.set({ [`docJob:${applicationId}:${kind}`]: { ...state, at: Date.now() } });
+}
+
+// Resolves once every job is marked 'generating', so a panel opening the
+// documents view right after never sees the empty state first.
+async function startDocuments(applicationId, kinds) {
+  await Promise.all(kinds.map((kind) => setDocJob(applicationId, kind, { status: 'generating' })));
+  runDocuments(applicationId, kinds);
+}
+
+async function runDocuments(applicationId, kinds) {
+  holdWorker(1);
+  try {
+    try {
+      await assertProfileReady();
+    } catch (err) {
+      const status = err.code === 'PROFILE_INCOMPLETE' ? 'blocked' : 'error';
+      await Promise.all(kinds.map((kind) => setDocJob(applicationId, kind, { status, error: err.message })));
+      return;
+    }
+    await Promise.all(
+      kinds.map(async (kind) => {
+        try {
+          await DOC_GENERATORS[kind](applicationId);
+          await setDocJob(applicationId, kind, { status: 'done' });
+        } catch (err) {
+          await setDocJob(applicationId, kind, { status: 'error', error: err.message });
+        }
+      }),
+    );
+  } finally {
+    holdWorker(-1);
+  }
 }
 
 // Every capture failure reaches the user the same way: an OS notification
@@ -251,7 +446,7 @@ function notify(title, message) {
   chrome.notifications.create({ type: 'basic', iconUrl: 'icons/icon128.png', title, message });
 }
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === 'login') {
     login()
       .then(() => sendResponse({ success: true }))
@@ -332,10 +527,41 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 
+  // sender.tab is set for the LinkedIn pill and absent for the panel itself.
   if (msg.action === 'capture') {
-    capture(msg.payload)
+    capture(msg.payload, sender.tab?.windowId)
       .then((data) => sendResponse({ success: true, data }))
       .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
+  if (msg.action === 'fetchCaptureReview') {
+    fetchCaptureReview(msg.draftId)
+      .then((data) => sendResponse({ success: true, data }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
+  if (msg.action === 'confirmCaptureDraft') {
+    confirmCaptureDraft(msg.draftId, msg.application)
+      .then((data) => sendResponse({ success: true, data }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
+  // Profile fit in the panel's capture review — same endpoint as the app's
+  // JobFitCheck; persists nothing.
+  if (msg.action === 'analyzeJobFit') {
+    apiFetchJson('/ai/job-fit/analyze', { method: 'POST', body: JSON.stringify(msg.input) })
+      .then((data) => sendResponse({ success: true, data }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
+  if (msg.action === 'discardCaptureDraft') {
+    apiFetchJson(`/application/capture/${encodeURIComponent(msg.draftId)}`, { method: 'DELETE' })
+      .then((data) => sendResponse({ success: true, data }))
+      .catch((err) => sendResponse({ success: false, error: err.message, status: err.status }));
     return true;
   }
 
@@ -343,6 +569,31 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     openOrFocusAppTab(msg.path)
       .then(() => sendResponse({ success: true }))
       .catch((err) => sendResponse({ success: false, error: `Couldn't open Notespacehub: ${err.message}` }));
+    return true;
+  }
+
+  if (msg.action === 'api') {
+    const init = { method: msg.method || 'GET' };
+    if (msg.body !== undefined) init.body = JSON.stringify(msg.body);
+    apiFetchJson(msg.path, init)
+      .then((data) => sendResponse({ success: true, data }))
+      .catch((err) => sendResponse({ success: false, error: err.message, status: err.status }));
+    return true;
+  }
+
+  if (msg.action === 'apiPdf') {
+    fetchPdfDataUrl(msg.path)
+      .then((data) => sendResponse({ success: true, data }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
+  // Answers once the jobs are marked 'generating'; they finish in the
+  // background and report through chrome.storage.session.
+  if (msg.action === 'generateDocuments') {
+    startDocuments(msg.applicationId, msg.kinds)
+      .then(() => sendResponse({ success: true }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
     return true;
   }
 });

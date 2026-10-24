@@ -12,3 +12,6 @@ const DEV = true;
 
 const API_BASE = DEV ? 'http://localhost:1111/api' : 'https://notespacehub.com/api';
 const APP_BASE = DEV ? 'http://localhost:3000' : 'https://notespacehub.com';
+// Public R2 origin uploaded note attachments are served from — the
+// extension's copy of notehub-app's VITE_R2_PUBLIC_URL.
+const R2_PUBLIC_URL = DEV ? 'https://notehub-dev.kasigo.online' : '';
