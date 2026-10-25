@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="sidepanel.css" />
   <link rel="stylesheet" href="sidepanel-documents.css" />
   <link rel="stylesheet" href="sidepanel-thispage.css" />
+  <link rel="stylesheet" href="sidepanel-applications.css" />
 </head>
 <body class="w-full h-screen min-h-screen font-sans bg-white text-gray-900 overflow-hidden">
 
@@ -75,17 +76,28 @@
       <div id="thisPageBody" class="tp-body" aria-live="polite"></div>
     </div>
 
-    <!-- Tab: Recent applications -->
-    <div id="tab-applications" class="flex flex-col flex-1 min-h-0 overflow-y-auto px-4 py-3">
-      <p id="applications-today-count" class="text-xs text-gray-500 mb-2"></p>
-      <div id="applications-loading" class="flex items-center justify-center h-10">
-        <div class="w-4 h-4 border-2 border-gray-200 border-t-gray-700 rounded-full animate-spin"></div>
+    <!-- Tab: Applications — recorded today, then the rest, newest first (sidepanel.js) -->
+    <div id="tab-applications" class="flex flex-col flex-1 min-h-0">
+      <div class="px-3 pt-3 pb-2 shrink-0">
+        <div class="relative">
+          <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          </svg>
+          <input
+            id="applicationsSearch"
+            type="search"
+            placeholder="Search by role or company"
+            aria-label="Search applications by role or company"
+            class="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg outline-none placeholder-gray-400 focus:border-gray-400 transition-colors bg-white"
+          />
+        </div>
       </div>
-      <p id="applications-empty" class="text-xs text-gray-400" style="display:none">No applications yet. Capture your first job to get started.</p>
-      <div id="applications-table-wrap" style="display:none">
-        <table class="w-full text-sm border-collapse">
-          <tbody id="applications-list"></tbody>
-        </table>
+      <div class="flex-1 min-h-0 overflow-y-auto px-4 pb-3">
+        <div id="applications-loading" class="flex items-center justify-center h-10">
+          <div class="w-4 h-4 border-2 border-gray-200 border-t-gray-700 rounded-full animate-spin"></div>
+        </div>
+        <p id="applications-empty" class="text-xs text-gray-400" style="display:none">No applications yet. Capture your first job to get started.</p>
+        <div id="applications-list" class="apps-list" aria-live="polite"></div>
       </div>
     </div>
 

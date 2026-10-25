@@ -90,27 +90,18 @@ async function openOrFocusAppTab(path) {
   await chrome.tabs.create({ url });
 }
 
-function todayISODate() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-// Recent-applications panel needs both the 5 most-recently-updated rows AND
-// an accurate "recorded today" count — the latter can't come from those 5
-// rows alone since more than 5 may have been added today. dateApplied
-// defaults to the creation instant unless the user backdates it (see
-// ApplicationService.create), so filtering on it approximates "recorded
-// today" without a backend change.
-async function fetchApplicationsWithTodayCount() {
-  const today = todayISODate();
-  const [applications, todayRes] = await Promise.all([
-    apiFetchJson('/application?limit=5'),
-    apiFetch(`/application?dateAppliedFrom=${today}&dateAppliedTo=${today}&limit=1`).then(async (res) => {
-      if (!res.ok) throw await errorFromResponse(res);
-      return res.json();
-    }),
-  ]);
-  return { applications, todayCount: todayRes?.meta?.total ?? 0 };
+// The panel's Applications tab: up to 100 (the API's max) most recently
+// updated rows, matched on company or role when `search` is set. The panel
+// groups and orders them by dateAdded itself. Anything added on a day comes
+// after it in updatedAt order, so the newest-added rows are always in this
+// page; `total` tells the panel when older ones were left out.
+async function fetchApplications(search) {
+  const params = new URLSearchParams({ limit: '100' });
+  if (search?.trim()) params.set('search', search.trim());
+  const res = await apiFetch(`/application?${params}`);
+  if (!res.ok) throw await errorFromResponse(res);
+  const result = await res.json();
+  return { applications: result.data ?? [], total: result.meta?.total ?? 0 };
 }
 
 async function login() {
@@ -586,7 +577,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.action === 'fetchApplications') {
-    fetchApplicationsWithTodayCount()
+    fetchApplications(msg.search)
       .then((data) => sendResponse({ success: true, data }))
       .catch((err) => sendResponse({ success: false, error: err.message }));
     return true;

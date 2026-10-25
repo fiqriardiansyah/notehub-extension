@@ -74,8 +74,7 @@ const captureBannerClose = document.getElementById('captureBannerClose');
 const applicationsLoading = document.getElementById('applications-loading');
 const applicationsEmpty = document.getElementById('applications-empty');
 const applicationsList = document.getElementById('applications-list');
-const applicationsTableWrap = document.getElementById('applications-table-wrap');
-const applicationsTodayCount = document.getElementById('applications-today-count');
+const applicationsSearch = document.getElementById('applicationsSearch');
 const refreshBtn = document.getElementById('refreshBtn');
 const tabThisPageBtn = document.getElementById('tabThisPageBtn');
 const tabApplicationsBtn = document.getElementById('tabApplicationsBtn');
@@ -858,11 +857,14 @@ captureReviewOpenAppBtn.addEventListener('click', () => {
   chrome.storage.session.remove('captureReview');
 });
 
-// ── Recent applications ──────────────────────────────────────────────────────
+// ── Applications ─────────────────────────────────────────────────────────────
+// Two sections: recorded today (dateAdded on the viewer's own calendar day),
+// then everything earlier, each newest first. The search box matches company
+// or role on the server, so it also finds rows beyond the 100 fetched.
 
-function requestApplications() {
+function requestApplications(search) {
   return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage({ action: 'fetchApplications' }, (res) => {
+    chrome.runtime.sendMessage({ action: 'fetchApplications', search }, (res) => {
       if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
       else if (res?.success) resolve(res.data);
       else reject(new Error(res?.error || 'Failed to load applications'));
@@ -870,50 +872,96 @@ function requestApplications() {
   });
 }
 
+function addedTime(app) {
+  return new Date(app.dateAdded || app.createdAt).getTime();
+}
+
+function formatAddedDate(time) {
+  const d = new Date(time);
+  const opts = { day: 'numeric', month: 'short' };
+  if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
+  return d.toLocaleDateString(undefined, opts);
+}
+
+function applicationRow(app, showDate) {
+  const meta = showDate ? `${esc(app.company)} · ${esc(formatAddedDate(addedTime(app)))}` : esc(app.company);
+  return `
+    <button type="button" class="apps-row" data-id="${esc(app.id)}" title="${esc(`${app.role} — ${app.company}`)}">
+      <span class="apps-role">${esc(app.role)}</span>
+      <span class="apps-meta">${meta}</span>
+    </button>`;
+}
+
+function applicationSection(label, apps, showDate, emptyText) {
+  if (!apps.length && !emptyText) return '';
+  return `
+    <section class="apps-section">
+      <h3 class="apps-heading">${label} <span class="apps-count">${apps.length}</span></h3>
+      ${apps.length ? apps.map((app) => applicationRow(app, showDate)).join('') : `<p class="apps-none">${emptyText}</p>`}
+    </section>`;
+}
+
+// Bumped per load so a slow answer for an older search never overwrites a
+// newer one.
+let applicationsRun = 0;
+
 async function loadRecentApplications() {
-  applicationsLoading.style.display = 'flex';
+  const run = ++applicationsRun;
+  const search = applicationsSearch.value.trim();
+  // Spinner only while there's nothing to show; a search or refresh swaps
+  // the list in place.
+  if (!applicationsList.childElementCount) applicationsLoading.style.display = 'flex';
   applicationsEmpty.style.display = 'none';
-  applicationsTableWrap.style.display = 'none';
-  applicationsTodayCount.textContent = '';
 
   try {
-    const { applications, todayCount } = await requestApplications();
+    const { applications, total } = await requestApplications(search);
+    if (run !== applicationsRun) return;
     applicationsLoading.style.display = 'none';
-    applicationsTodayCount.textContent = `${todayCount} application${todayCount === 1 ? '' : 's'} recorded today`;
 
-    if (!applications?.length) {
-      applicationsEmpty.textContent = 'No applications yet. Capture your first job to get started.';
+    if (!applications.length) {
+      applicationsList.innerHTML = '';
+      applicationsEmpty.textContent = search
+        ? `No applications match “${search}”.`
+        : 'No applications yet. Capture your first job to get started.';
       applicationsEmpty.style.display = 'block';
       return;
     }
-    applicationsList.innerHTML = applications
-      .map(
-        (app) => `
-        <tr class="app-row cursor-pointer hover:bg-gray-50 transition-colors border-b border-gray-100 last:border-0" data-id="${esc(app.id)}">
-          <td class="py-2 pr-2 min-w-0">
-            <span class="block text-sm text-gray-900 truncate">${esc(app.role)}</span>
-          </td>
-          <td class="py-2 pl-2 min-w-0 text-right">
-            <span class="block text-xs text-gray-400 truncate">${esc(app.company)}</span>
-          </td>
-        </tr>`,
-      )
-      .join('');
+
+    const sorted = [...applications].sort((a, b) => addedTime(b) - addedTime(a));
+    const todayKey = new Date().toDateString();
+    const today = sorted.filter((app) => new Date(addedTime(app)).toDateString() === todayKey);
+    const earlier = sorted.filter((app) => new Date(addedTime(app)).toDateString() !== todayKey);
+    const more = total > applications.length
+      ? `<p class="apps-more">Showing the ${applications.length} most recent of ${total}. Search to find the others.</p>`
+      : '';
+
+    // Without a search, today's section stays as the day's count even at 0.
+    applicationsList.innerHTML =
+      applicationSection('Recorded today', today, false, search ? '' : 'Nothing recorded yet today.') +
+      applicationSection('Earlier', earlier, true) +
+      more;
     // The application's documents open right here (sidepanel-documents.js);
     // that view links on to the full page in the app.
-    applicationsList.querySelectorAll('.app-row').forEach((row) => {
+    applicationsList.querySelectorAll('.apps-row').forEach((row) => {
       row.addEventListener('click', () => {
         const app = applications.find((a) => a.id === row.dataset.id);
         if (app) showApplicationDocuments(app);
       });
     });
-    applicationsTableWrap.style.display = 'block';
   } catch (err) {
+    if (run !== applicationsRun) return;
     applicationsLoading.style.display = 'none';
+    applicationsList.innerHTML = '';
     applicationsEmpty.textContent = `Couldn't load applications: ${err.message}`;
     applicationsEmpty.style.display = 'block';
   }
 }
+
+let applicationsSearchTimer = null;
+applicationsSearch.addEventListener('input', () => {
+  clearTimeout(applicationsSearchTimer);
+  applicationsSearchTimer = setTimeout(loadRecentApplications, 300);
+});
 
 // ── Home tabs (This page / Applications / Notes) ─────────────────────────────
 // "This page" comes up by itself whenever the active tab shows a job (see
