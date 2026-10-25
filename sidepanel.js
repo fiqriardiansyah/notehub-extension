@@ -79,9 +79,11 @@ const refreshBtn = document.getElementById('refreshBtn');
 const tabThisPageBtn = document.getElementById('tabThisPageBtn');
 const tabApplicationsBtn = document.getElementById('tabApplicationsBtn');
 const tabNotesBtn = document.getElementById('tabNotesBtn');
+const tabMeBtn = document.getElementById('tabMeBtn');
 const tabThisPage = document.getElementById('tab-thispage');
 const tabApplications = document.getElementById('tab-applications');
 const tabNotes = document.getElementById('tab-notes');
+const tabMe = document.getElementById('tab-me');
 const viewCaptureReview = document.getElementById('view-capture-review');
 const captureReviewSaveBtn = document.getElementById('captureReviewSaveBtn');
 const captureReviewError = document.getElementById('captureReviewError');
@@ -444,6 +446,7 @@ function showLoggedIn() {
   setActiveTab(chosenTab);
   loadNotes();
   startThisPage(); // sidepanel-thispage.js — switches to "This page" on a job page
+  startMe(); // sidepanel-me.js — the cached profile, ready before the tab is opened
   loadRecentApplications();
   syncCaptureReview();
 }
@@ -963,7 +966,7 @@ applicationsSearch.addEventListener('input', () => {
   applicationsSearchTimer = setTimeout(loadRecentApplications, 300);
 });
 
-// ── Home tabs (This page / Applications / Notes) ─────────────────────────────
+// ── Home tabs (This page / Applications / Notes / Me) ────────────────────────
 // "This page" comes up by itself whenever the active tab shows a job (see
 // showDefaultTab, called by sidepanel-thispage.js); otherwise the panel
 // keeps the tab the user last picked, remembered across reopens.
@@ -974,6 +977,7 @@ const HOME_TABS = {
   thispage: [tabThisPageBtn, tabThisPage],
   applications: [tabApplicationsBtn, tabApplications],
   notes: [tabNotesBtn, tabNotes],
+  me: [tabMeBtn, tabMe],
 };
 const CHOSEN_TAB_KEY = 'panelTab';
 let chosenTab = 'applications';
@@ -987,6 +991,7 @@ function setActiveTab(tab) {
     pane.style.display = name === tab ? 'flex' : 'none';
     btn.className = name === tab ? TAB_ACTIVE_CLASS : TAB_INACTIVE_CLASS;
   });
+  if (tab === 'me') showMe(); // sidepanel-me.js — refreshes in the background
 }
 
 function chooseTab(tab) {
@@ -1002,13 +1007,14 @@ function showDefaultTab(onJobPage) {
 tabThisPageBtn.addEventListener('click', () => chooseTab('thispage'));
 tabApplicationsBtn.addEventListener('click', () => chooseTab('applications'));
 tabNotesBtn.addEventListener('click', () => chooseTab('notes'));
+tabMeBtn.addEventListener('click', () => chooseTab('me'));
 
 // ── Refresh ───────────────────────────────────────────────────────────────────
 
 refreshBtn.addEventListener('click', () => {
   refreshBtn.disabled = true;
   refreshBtn.classList.add('animate-spin');
-  Promise.allSettled([loadNotes(), checkActivePage({ force: true }), loadRecentApplications()]).finally(() => {
+  Promise.allSettled([loadNotes(), checkActivePage({ force: true }), loadRecentApplications(), refreshMe({ force: true })]).finally(() => {
     refreshBtn.disabled = false;
     refreshBtn.classList.remove('animate-spin');
   });

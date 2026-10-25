@@ -1,0 +1,225 @@
+/*
+ * The "Me" tab (sidepanel-me.js). Hand-written like sidepanel-thispage.css,
+ * whose .tp-card / .tp-banner / .tp-skel / .tp-empty and the documents
+ * view's .doc-btn / .doc-link / .doc-input it builds on. Colours are the
+ * panel's gray palette (Tailwind's gray-50…900).
+ */
+
+.me-search-bar { padding: 0.75rem 0.75rem 0.5rem; }
+.me-body { display: flex; flex-direction: column; gap: 0.625rem; padding-top: 0.125rem; }
+
+.me-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Sections ────────────────────────────────────────────────────────────── */
+
+.me-section { border: 1px solid #e5e7eb; border-radius: 0.75rem; background: #fff; overflow: hidden; }
+.me-section-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.625rem 0.75rem;
+  background: none;
+  border: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 150ms;
+}
+.me-section-head:hover { background: #f9fafb; }
+.me-section-head:focus-visible, .me-group-head:focus-visible { outline: none; box-shadow: inset 0 0 0 2px #111827; }
+.me-section-title { flex: 1; min-width: 0; font-size: 0.8125rem; font-weight: 600; color: #111827; }
+.me-missing { font-size: 0.6875rem; color: #9ca3af; white-space: nowrap; }
+.me-chevron { display: inline-flex; color: #9ca3af; transition: transform 150ms; }
+.me-chevron svg { width: 0.875rem; height: 0.875rem; }
+.me-chevron.is-open { transform: rotate(180deg); }
+.me-section-body { display: flex; flex-direction: column; gap: 1px; padding: 0 0.375rem 0.375rem; }
+.me-section-body[hidden], .me-group-body[hidden] { display: none; }
+
+.me-quick { background: #f9fafb; }
+.me-quick-head { display: flex; align-items: center; gap: 0.5rem; padding: 0.625rem 0.75rem 0.25rem; }
+.me-quick .me-section-body > .tp-muted { padding: 0.25rem 0.375rem 0.375rem; }
+.me-hint { font-size: 0.6875rem; color: #9ca3af; }
+
+/* ── Rows ────────────────────────────────────────────────────────────────── */
+
+.me-row {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.5rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+  transition: background-color 150ms;
+}
+.me-row:hover { background: #f3f4f6; }
+.me-quick .me-row:hover { background: #fff; }
+.me-row:focus-visible { box-shadow: inset 0 0 0 2px #111827; }
+.me-row-main { display: flex; flex-direction: column; gap: 0.125rem; flex: 1; min-width: 0; }
+.me-row-label { display: flex; align-items: center; gap: 0.375rem; font-size: 0.6875rem; color: #6b7280; overflow-wrap: anywhere; }
+.me-row-value { font-size: 0.8125rem; line-height: 1.35; color: #111827; white-space: pre-line; overflow-wrap: anywhere; }
+.me-row-value.is-clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* Sensitive: unreadable until the eye is clicked; copying still works. */
+.me-row.is-hidden .me-row-value { filter: blur(5px); user-select: none; }
+.me-more { align-self: flex-start; font: inherit; font-size: 0.6875rem; font-weight: 500; color: #3b82f6; background: none; border: 0; padding: 0; cursor: pointer; }
+.me-more:hover { color: #2563eb; }
+
+.me-row-side { display: flex; align-items: center; gap: 0.125rem; flex: none; }
+.me-chars { font-size: 0.625rem; color: #9ca3af; white-space: nowrap; margin-right: 0.125rem; }
+.me-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 0;
+  border-radius: 0.375rem;
+  background: none;
+  color: #9ca3af;
+  cursor: pointer;
+}
+.me-icon svg { width: 0.875rem; height: 0.875rem; }
+.me-icon:hover { background: #e5e7eb; color: #374151; }
+.me-icon:focus-visible { outline: none; box-shadow: 0 0 0 2px #111827; }
+/* The pin shows on hover / focus, or after a long press on touch. */
+.me-pin { opacity: 0; }
+.me-row:hover .me-pin, .me-row:focus-within .me-pin, .me-row.show-actions .me-pin { opacity: 1; }
+.me-pin[aria-pressed="true"] { color: #111827; }
+.me-copy-icon { display: inline-flex; width: 1.5rem; justify-content: center; color: #d1d5db; transition: color 150ms; }
+.me-copy-icon svg { width: 0.875rem; height: 0.875rem; }
+.me-row:hover .me-copy-icon, .me-row:focus-visible .me-copy-icon { color: #6b7280; }
+
+.me-copied {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  background: rgba(236, 253, 245, 0.96);
+  color: #047857;
+  font-size: 0.75rem;
+  font-weight: 600;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms;
+}
+.me-row.is-copied .me-copied { opacity: 1; }
+
+/* Empty fields: a prompt to add them, never hidden. */
+.me-row-add { flex-direction: column; align-items: flex-start; gap: 0.125rem; }
+.me-add-text { font-size: 0.8125rem; color: #9ca3af; }
+.me-row-add:hover .me-add-text { color: #2563eb; }
+.me-row-empty { align-items: center; cursor: default; }
+.me-row-empty:hover { background: transparent; }
+.me-row-hint { font-size: 0.8125rem; color: #9ca3af; }
+.me-row-empty .me-row-side { gap: 0.625rem; }
+.me-row-empty .doc-link { font-size: 0.75rem; }
+
+.me-tag {
+  font-size: 0.5625rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #047857;
+  background: #ecfdf5;
+  border-radius: 0.25rem;
+  padding: 0.0625rem 0.3125rem;
+}
+
+/* ── Jobs and schools ────────────────────────────────────────────────────── */
+
+.me-group { border-top: 1px solid #f3f4f6; margin-top: 0.125rem; padding-top: 0.125rem; }
+.me-group-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.5rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.me-group-head:hover { background: #f3f4f6; }
+.me-group-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.me-group-title { font-size: 0.8125rem; font-weight: 500; color: #111827; overflow-wrap: anywhere; }
+.me-group-sub { font-size: 0.6875rem; color: #6b7280; }
+.me-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-left: 0.5rem;
+  padding: 0 0 0.375rem 0.25rem;
+  border-left: 2px solid #f3f4f6;
+}
+/* A bullet's label repeats the job's title — the group head already says it. */
+.me-group-body .me-row[data-key*=":bullet:"] .me-row-label { display: none; }
+.me-copy-all { align-self: flex-start; margin: 0.125rem 0.5rem 0.25rem; }
+.me-copy-all svg { width: 0.75rem; height: 0.75rem; }
+
+/* ── Answers and files ───────────────────────────────────────────────────── */
+
+.me-for { margin: 0.125rem 0.125rem 0.25rem; }
+.me-tailor { display: flex; flex-direction: column; align-items: flex-start; gap: 0.375rem; padding: 0.375rem 0.5rem 0.5rem; }
+.me-subhead {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #9ca3af;
+  padding: 0.625rem 0.5rem 0.125rem;
+}
+.me-section-body > .doc-error { padding: 0 0.5rem; }
+
+.me-file { display: flex; flex-direction: column; gap: 0.3rem; padding: 0.5rem; }
+.me-file-line { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+.me-select { flex: 1; min-width: 0; padding: 0.375rem 0.5rem; font-size: 0.8125rem; resize: none; }
+.me-file-name { flex: 1; min-width: 0; font-size: 0.8125rem; color: #111827; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.me-file .doc-btn { flex: none; }
+
+/* ── States ──────────────────────────────────────────────────────────────── */
+
+.me-stale {
+  font-size: 0.6875rem;
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 0.5rem;
+  padding: 0.375rem 0.625rem;
+}
+.me-empty-card .doc-btn { align-self: flex-start; margin-top: 0.25rem; }
+.me-results { display: flex; flex-direction: column; gap: 1px; border: 1px solid #e5e7eb; border-radius: 0.75rem; padding: 0.375rem; }
+.me-none { font-size: 0.8125rem; color: #6b7280; text-align: center; padding: 1.5rem 0; }
+.me-loading { display: flex; flex-direction: column; border: 1px solid #f3f4f6; border-radius: 0.75rem; padding: 0.25rem; }
+.me-skel-row { display: flex; flex-direction: column; gap: 0.375rem; padding: 0.625rem 0.5rem; }
+.me-footer { align-self: center; font-size: 0.75rem; padding: 0.25rem 0 0.5rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  .me-chevron, .me-copied, .me-row { transition: none; }
+}

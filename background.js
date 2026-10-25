@@ -135,12 +135,19 @@ async function login() {
   const result = await res.json();
   const accessToken = result.data.access_token;
 
+  // Whoever signs in, the Me tab never shows the last user's cached profile.
+  await chrome.storage.local.remove(['meQuickProfile', 'meCopyCounts']);
   await chrome.storage.local.set({ access_token: accessToken });
   return accessToken;
 }
 
+// The Me tab's copy of the profile and its copy counts are this user's —
+// they go with the token (the open-sections choice is only layout).
 async function logout() {
-  await chrome.storage.local.remove('access_token');
+  await chrome.storage.local.remove(['access_token', 'meQuickProfile', 'meCopyCounts']);
+  const session = await chrome.storage.session.get(null);
+  const meKeys = Object.keys(session).filter((key) => key.startsWith('meApp:'));
+  if (meKeys.length) await chrome.storage.session.remove(meKeys);
 }
 
 async function checkSession() {

@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="sidepanel-documents.css" />
   <link rel="stylesheet" href="sidepanel-thispage.css" />
   <link rel="stylesheet" href="sidepanel-applications.css" />
+  <link rel="stylesheet" href="sidepanel-me.css" />
 </head>
 <body class="w-full h-screen min-h-screen font-sans bg-white text-gray-900 overflow-hidden">
 
@@ -69,6 +70,7 @@
       <button id="tabThisPageBtn" class="flex-1 text-center text-xs font-medium py-2.5 border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">This page</button>
       <button id="tabApplicationsBtn" class="flex-1 text-center text-xs font-medium py-2.5 border-b-2 border-gray-900 text-gray-900 transition-colors cursor-pointer">Applications</button>
       <button id="tabNotesBtn" class="flex-1 text-center text-xs font-medium py-2.5 border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">Notes</button>
+      <button id="tabMeBtn" class="flex-1 text-center text-xs font-medium py-2.5 border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">Me</button>
     </div>
 
     <!-- Tab: This page — the job open in the active tab (sidepanel-thispage.js renders it) -->
@@ -99,6 +101,30 @@
         <p id="applications-empty" class="text-xs text-gray-400" style="display:none">No applications yet. Capture your first job to get started.</p>
         <div id="applications-list" class="apps-list" aria-live="polite"></div>
       </div>
+    </div>
+
+    <!-- Tab: Me — the user's own details, one click to copy (sidepanel-me.js renders it) -->
+    <div id="tab-me" class="flex flex-col flex-1 min-h-0" style="display:none">
+      <div class="me-search-bar shrink-0">
+        <div class="relative">
+          <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          </svg>
+          <input
+            id="meSearch"
+            type="search"
+            placeholder="Search your info…"
+            aria-label="Search your info"
+            aria-controls="meBody"
+            autocomplete="off"
+            class="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg outline-none placeholder-gray-400 focus:border-gray-400 transition-colors bg-white"
+          />
+        </div>
+      </div>
+      <div id="meScroll" class="flex-1 min-h-0 overflow-y-auto px-4 pb-3">
+        <div id="meBody" class="me-body"></div>
+      </div>
+      <p id="meLive" class="me-sr-only" aria-live="polite"></p>
     </div>
 
     <!-- Tab: Notes -->
@@ -545,5 +571,6 @@
   <script src="sidepanel.js"></script>
   <script src="sidepanel-documents.js"></script>
   <script src="sidepanel-thispage.js"></script>
+  <script src="sidepanel-me.js"></script>
 </body>
 </html>

@@ -876,6 +876,9 @@ function renderThisPage() {
     error: renderError,
   };
   thisPageBody.innerHTML = (views[page.state] || renderNotJobPage)();
+  // The Me tab shows the saved job's tailored answers (sidepanel-me.js,
+  // loaded after this file — not there yet on this file's first render).
+  if (typeof meSyncPage === 'function') meSyncPage();
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
