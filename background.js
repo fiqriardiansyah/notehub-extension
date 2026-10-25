@@ -1,5 +1,6 @@
 // API_BASE / APP_BASE come from config.js — see that file for the dev switch.
-importScripts('config.js');
+// job-sites.js: the job boards the "This page" tab and the pill recognise.
+importScripts('config.js', 'job-sites.js');
 
 // fetch() itself only rejects when the API can't be reached at all (offline,
 // server down, wrong API_BASE) — its bare "Failed to fetch" means nothing to
@@ -59,6 +60,15 @@ async function apiFetchJson(path, init) {
   if (!res.ok) throw await errorFromResponse(res);
   const result = await res.json();
   return result.data || result;
+}
+
+// For an endpoint whose answer can be null ("nothing found"), which
+// apiFetchJson's unwrap would turn into the whole envelope.
+async function apiFetchData(path, init) {
+  const res = await apiFetch(path, init);
+  if (!res.ok) throw await errorFromResponse(res);
+  const result = await res.json();
+  return result.data ?? null;
 }
 
 function appAbsolute(path) {
@@ -180,6 +190,12 @@ chrome.runtime.onInstalled.addListener(async () => {
   } catch (_) {
     // Chrome < 114 has no sidePanel API.
   }
+  getJobSites().catch(() => {});
+});
+
+// So the pill on a freshly opened job page already has the API's selectors.
+chrome.runtime.onStartup.addListener(() => {
+  getJobSites().catch(() => {});
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
@@ -302,6 +318,63 @@ async function confirmCaptureDraft(draftId, application) {
   await setCaptureStatus('success', `Saved ${created.role || 'application'} at ${created.company || 'company'}`);
   await startDocuments(created.id, ['cv', 'email']);
   return created;
+}
+
+// ── "This page" tab ────────────────────────────────────────────────────────
+
+// The API's copy of the job-site config (see job-sites.js) is kept in
+// chrome.storage.local, where the pill's content script reads it too, and
+// fetched again once it's an hour old. Unreachable API or no config there:
+// the stored copy, else the bundled default.
+const JOB_SITES_MAX_AGE_MS = 60 * 60 * 1000;
+
+async function getJobSites() {
+  const { [JOB_SITES_STORAGE_KEY]: stored } = await chrome.storage.local.get(JOB_SITES_STORAGE_KEY);
+  if (stored && Date.now() - stored.fetchedAt < JOB_SITES_MAX_AGE_MS) return nshSitesFromStored(stored);
+  try {
+    const res = await fetch(`${API_BASE}/extension/job-sites`);
+    if (res.ok) {
+      const body = await res.json();
+      const fresh = { remote: body?.data ?? null, fetchedAt: Date.now() };
+      await chrome.storage.local.set({ [JOB_SITES_STORAGE_KEY]: fresh });
+      return nshSitesFromStored(fresh);
+    }
+  } catch (_) {}
+  return nshSitesFromStored(stored);
+}
+
+// GET /application/lookup answers the application or null.
+function lookupJob({ source, sourceJobId, company, role }) {
+  const params = new URLSearchParams({ source, sourceJobId });
+  if (company && role) {
+    params.set('company', company);
+    params.set('role', role);
+  }
+  return apiFetchData(`/application/lookup?${params}`);
+}
+
+// Saved straight to the board at "Saved" (no capture draft — the panel is
+// the review step), not yet applied, with the canonical URL as its job URL.
+// A second save of the same job is the API's 409, which the panel answers by
+// looking the job up again.
+async function saveJob(job) {
+  const jobPortalId = await resolveJobPortalId(job.jobUrl);
+  return apiFetchJson('/application', {
+    method: 'POST',
+    body: JSON.stringify({
+      company: job.company,
+      role: job.role,
+      location: job.location || undefined,
+      salaryRange: job.salaryRange || undefined,
+      jobUrl: job.jobUrl || undefined,
+      jobDescription: job.jobDescription || undefined,
+      status: 'SAVED',
+      dateApplied: null,
+      source: job.source,
+      sourceJobId: job.sourceJobId,
+      jobPortalId,
+    }),
+  });
 }
 
 // ── Application documents ──────────────────────────────────────────────────
@@ -554,7 +627,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === 'analyzeJobFit') {
     apiFetchJson('/ai/job-fit/analyze', { method: 'POST', body: JSON.stringify(msg.input) })
       .then((data) => sendResponse({ success: true, data }))
-      .catch((err) => sendResponse({ success: false, error: err.message }));
+      .catch((err) => sendResponse({ success: false, error: err.message, status: err.status, code: err.code }));
     return true;
   }
 
@@ -577,7 +650,37 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.body !== undefined) init.body = JSON.stringify(msg.body);
     apiFetchJson(msg.path, init)
       .then((data) => sendResponse({ success: true, data }))
-      .catch((err) => sendResponse({ success: false, error: err.message, status: err.status }));
+      .catch((err) => sendResponse({ success: false, error: err.message, status: err.status, code: err.code }));
+    return true;
+  }
+
+  if (msg.action === 'getJobSites') {
+    getJobSites()
+      .then((data) => sendResponse({ success: true, data }))
+      .catch(() => sendResponse({ success: true, data: NSH_DEFAULT_JOB_SITES }));
+    return true;
+  }
+
+  if (msg.action === 'lookupJob') {
+    lookupJob(msg.query)
+      .then((data) => sendResponse({ success: true, data }))
+      .catch((err) => sendResponse({ success: false, error: err.message, status: err.status, code: err.code }));
+    return true;
+  }
+
+  // Only the cleaned description of the one open job, already capped by the
+  // panel at the API's 8,000 characters.
+  if (msg.action === 'extractJobFields') {
+    apiFetchJson('/application/capture/extract', { method: 'POST', body: JSON.stringify({ text: msg.text }) })
+      .then((data) => sendResponse({ success: true, data }))
+      .catch((err) => sendResponse({ success: false, error: err.message, status: err.status, code: err.code }));
+    return true;
+  }
+
+  if (msg.action === 'saveJob') {
+    saveJob(msg.job)
+      .then((data) => sendResponse({ success: true, data }))
+      .catch((err) => sendResponse({ success: false, error: err.message, status: err.status, code: err.code }));
     return true;
   }
 

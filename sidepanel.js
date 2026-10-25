@@ -71,20 +71,16 @@ const captureBannerSpinner = document.getElementById('captureBannerSpinner');
 const captureBannerText = document.getElementById('captureBannerText');
 const captureBannerClose = document.getElementById('captureBannerClose');
 
-const currentTabJob = document.getElementById('currentTabJob');
-const currentTabHint = document.getElementById('currentTabHint');
-const currentTabTitle = document.getElementById('currentTabTitle');
-const currentTabCompany = document.getElementById('currentTabCompany');
-const currentTabCaptureBtn = document.getElementById('currentTabCaptureBtn');
-const currentTabCaptureLabel = document.getElementById('currentTabCaptureLabel');
 const applicationsLoading = document.getElementById('applications-loading');
 const applicationsEmpty = document.getElementById('applications-empty');
 const applicationsList = document.getElementById('applications-list');
 const applicationsTableWrap = document.getElementById('applications-table-wrap');
 const applicationsTodayCount = document.getElementById('applications-today-count');
 const refreshBtn = document.getElementById('refreshBtn');
+const tabThisPageBtn = document.getElementById('tabThisPageBtn');
 const tabApplicationsBtn = document.getElementById('tabApplicationsBtn');
 const tabNotesBtn = document.getElementById('tabNotesBtn');
+const tabThisPage = document.getElementById('tab-thispage');
 const tabApplications = document.getElementById('tab-applications');
 const tabNotes = document.getElementById('tab-notes');
 const viewCaptureReview = document.getElementById('view-capture-review');
@@ -446,9 +442,9 @@ function showLoggedIn() {
   viewTodoCreate.style.display = 'none';
   viewLoggedIn.style.display = 'flex';
   signedIn = true;
-  setActiveTab('applications');
+  setActiveTab(chosenTab);
   loadNotes();
-  refreshCurrentJob();
+  startThisPage(); // sidepanel-thispage.js — switches to "This page" on a job page
   loadRecentApplications();
   syncCaptureReview();
 }
@@ -517,74 +513,18 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 syncCaptureBanner();
 
-// ── Current tab (capture) ────────────────────────────────────────────────────
-// Reads only the active tab's id (no "tabs" permission needed) and asks the
-// LinkedIn content script whether it has a job; never inspects tab.url itself.
-
-async function refreshCurrentJob() {
-  currentTabJob.style.display = 'none';
-  currentTabHint.style.display = 'none';
-
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab?.id == null) {
-    currentTabHint.style.display = 'block';
-    return;
-  }
-
-  chrome.tabs.sendMessage(tab.id, { action: 'detect' }, (resp) => {
-    if (chrome.runtime.lastError || !resp?.job) {
-      currentTabHint.style.display = 'block';
-      return;
-    }
-    const job = resp.job;
-    currentTabTitle.textContent = job.title || 'Untitled role';
-    currentTabCompany.textContent = job.company || '';
-    currentTabJob.style.display = 'block';
-    // resp.sourceUrl only — the panel never reads tab.url, which would be
-    // undefined here anyway without the "tabs" permission.
-    currentTabCaptureBtn.onclick = () => captureFromCurrentTab(job, resp.sourceUrl);
-  });
-}
-
-// React to tab switches (fires with just a tabId — no "tabs" permission needed).
-chrome.tabs.onActivated.addListener(refreshCurrentJob);
-
-// React to LinkedIn SPA navigation broadcast from the content script.
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg?.action === 'jobChanged') refreshCurrentJob();
-});
-
-// Panel document is torn down on close and rebuilt on reopen — re-sync on focus.
+// Panel document is torn down on close and rebuilt on reopen — re-sync on
+// focus. The job on the page is followed by sidepanel-thispage.js.
 window.addEventListener('focus', () => {
-  refreshCurrentJob();
+  if (signedIn) checkActivePage();
   loadRecentApplications();
 });
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
-    refreshCurrentJob();
+    if (signedIn) checkActivePage();
     loadRecentApplications();
   }
 });
-
-function captureFromCurrentTab(fields, sourceUrl) {
-  currentTabCaptureBtn.disabled = true;
-  currentTabCaptureLabel.textContent = 'Capturing…';
-  chrome.runtime.sendMessage(
-    { action: 'capture', payload: { source: 'extension-structured', fields, sourceUrl } },
-    (resp) => {
-      currentTabCaptureBtn.disabled = false;
-      currentTabCaptureLabel.textContent = !resp?.success
-        ? "Couldn't capture, try again"
-        : resp.data?.review === 'panel' ? 'Captured' : 'Captured — opening draft';
-      // background.js's capture() already put its reason in the banner; this
-      // covers the worker not answering at all.
-      if (!resp?.success) showPanelError(resp?.error || chrome.runtime.lastError?.message || 'Capture failed');
-      setTimeout(() => {
-        currentTabCaptureLabel.textContent = 'Capture to Notespacehub';
-      }, 3000);
-    },
-  );
-}
 
 function openAppTab(path) {
   chrome.runtime.sendMessage({ action: 'openAppTab', path }, (res) => {
@@ -618,6 +558,7 @@ function sendMessageAsync(message) {
       else {
         const err = new Error(res?.error || 'Request failed');
         err.status = res?.status;
+        err.code = res?.code;
         reject(err);
       }
     });
@@ -974,28 +915,52 @@ async function loadRecentApplications() {
   }
 }
 
-// ── Home tabs (Applications / Notes) ─────────────────────────────────────────
+// ── Home tabs (This page / Applications / Notes) ─────────────────────────────
+// "This page" comes up by itself whenever the active tab shows a job (see
+// showDefaultTab, called by sidepanel-thispage.js); otherwise the panel
+// keeps the tab the user last picked, remembered across reopens.
 
 const TAB_ACTIVE_CLASS = 'flex-1 text-center text-xs font-medium py-2.5 border-b-2 border-gray-900 text-gray-900 transition-colors cursor-pointer';
 const TAB_INACTIVE_CLASS = 'flex-1 text-center text-xs font-medium py-2.5 border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors cursor-pointer';
+const HOME_TABS = {
+  thispage: [tabThisPageBtn, tabThisPage],
+  applications: [tabApplicationsBtn, tabApplications],
+  notes: [tabNotesBtn, tabNotes],
+};
+const CHOSEN_TAB_KEY = 'panelTab';
+let chosenTab = 'applications';
+
+chrome.storage.local.get(CHOSEN_TAB_KEY, (res) => {
+  if (HOME_TABS[res?.[CHOSEN_TAB_KEY]]) chosenTab = res[CHOSEN_TAB_KEY];
+});
 
 function setActiveTab(tab) {
-  const isApplications = tab === 'applications';
-  tabApplications.style.display = isApplications ? 'flex' : 'none';
-  tabNotes.style.display = isApplications ? 'none' : 'flex';
-  tabApplicationsBtn.className = isApplications ? TAB_ACTIVE_CLASS : TAB_INACTIVE_CLASS;
-  tabNotesBtn.className = isApplications ? TAB_INACTIVE_CLASS : TAB_ACTIVE_CLASS;
+  Object.entries(HOME_TABS).forEach(([name, [btn, pane]]) => {
+    pane.style.display = name === tab ? 'flex' : 'none';
+    btn.className = name === tab ? TAB_ACTIVE_CLASS : TAB_INACTIVE_CLASS;
+  });
 }
 
-tabApplicationsBtn.addEventListener('click', () => setActiveTab('applications'));
-tabNotesBtn.addEventListener('click', () => setActiveTab('notes'));
+function chooseTab(tab) {
+  chosenTab = tab;
+  setActiveTab(tab);
+  chrome.storage.local.set({ [CHOSEN_TAB_KEY]: tab }).catch(() => {});
+}
+
+function showDefaultTab(onJobPage) {
+  setActiveTab(onJobPage ? 'thispage' : chosenTab);
+}
+
+tabThisPageBtn.addEventListener('click', () => chooseTab('thispage'));
+tabApplicationsBtn.addEventListener('click', () => chooseTab('applications'));
+tabNotesBtn.addEventListener('click', () => chooseTab('notes'));
 
 // ── Refresh ───────────────────────────────────────────────────────────────────
 
 refreshBtn.addEventListener('click', () => {
   refreshBtn.disabled = true;
   refreshBtn.classList.add('animate-spin');
-  Promise.allSettled([loadNotes(), refreshCurrentJob(), loadRecentApplications()]).finally(() => {
+  Promise.allSettled([loadNotes(), checkActivePage({ force: true }), loadRecentApplications()]).finally(() => {
     refreshBtn.disabled = false;
     refreshBtn.classList.remove('animate-spin');
   });

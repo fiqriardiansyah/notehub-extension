@@ -4,8 +4,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>NoteHub</title>
+  <!-- The web app's font (notehub-app's index.html loads the same family). -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" />
   <link rel="stylesheet" href="sidepanel.css" />
   <link rel="stylesheet" href="sidepanel-documents.css" />
+  <link rel="stylesheet" href="sidepanel-thispage.css" />
 </head>
 <body class="w-full h-screen min-h-screen font-sans bg-white text-gray-900 overflow-hidden">
 
@@ -16,6 +21,9 @@
     <span id="captureBannerText" class="flex-1 text-center leading-snug" style="overflow-wrap:anywhere"></span>
     <button id="captureBannerClose" type="button" class="shrink-0 text-sm cursor-pointer" aria-label="Dismiss" style="display:none">&times;</button>
   </div>
+
+  <!-- Toast (e.g. "Saved · Open in Notespacehub"), bottom of every view -->
+  <div id="panelToast" class="tp-toast" role="status" style="display:none"></div>
 
   <!-- Loading -->
   <div id="view-loading" class="flex items-center justify-center w-full h-screen">
@@ -55,26 +63,16 @@
       </div>
     </div>
 
-    <!-- Current tab: capture -->
-    <div class="px-4 py-3 border-b border-gray-100 shrink-0">
-      <div id="currentTabJob" style="display:none">
-        <p class="text-[11px] uppercase tracking-wide text-gray-400 mb-1">On this page</p>
-        <p id="currentTabTitle" class="text-sm font-semibold text-gray-900 truncate"></p>
-        <p id="currentTabCompany" class="text-xs text-gray-500 truncate mb-2"></p>
-        <button id="currentTabCaptureBtn" class="w-full py-2 text-xs font-semibold text-white rounded-lg cursor-pointer transition-colors bg-[#141b2d] hover:bg-[#1d2a45] disabled:opacity-60 disabled:cursor-default flex items-center justify-center gap-1.5">
-          <span class="w-1.5 h-1.5 rounded-full bg-[#f5b301] shrink-0"></span>
-          <span id="currentTabCaptureLabel">Capture to Notespacehub</span>
-        </button>
-      </div>
-      <div id="currentTabHint" class="text-xs text-gray-400" style="display:none">
-        Highlight the job text on this page and right-click → "Capture job to Notespacehub".
-      </div>
-    </div>
-
     <!-- Tabs -->
     <div class="flex border-b border-gray-100 shrink-0">
+      <button id="tabThisPageBtn" class="flex-1 text-center text-xs font-medium py-2.5 border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">This page</button>
       <button id="tabApplicationsBtn" class="flex-1 text-center text-xs font-medium py-2.5 border-b-2 border-gray-900 text-gray-900 transition-colors cursor-pointer">Applications</button>
       <button id="tabNotesBtn" class="flex-1 text-center text-xs font-medium py-2.5 border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">Notes</button>
+    </div>
+
+    <!-- Tab: This page — the job open in the active tab (sidepanel-thispage.js renders it) -->
+    <div id="tab-thispage" class="flex flex-col flex-1 min-h-0 overflow-y-auto px-4 py-3" style="display:none">
+      <div id="thisPageBody" class="tp-body" aria-live="polite"></div>
     </div>
 
     <!-- Tab: Recent applications -->
@@ -514,6 +512,8 @@
   </div>
 
   <script src="config.js"></script>
+  <script src="job-sites.js"></script>
+  <script src="job-extract.js"></script>
   <script src="purify.min.js"></script>
   <script src="editorjs.umd.js"></script>
   <script src="editorjs-header.umd.js"></script>
@@ -532,5 +532,6 @@
   <script src="editorjs-image.umd.js"></script>
   <script src="sidepanel.js"></script>
   <script src="sidepanel-documents.js"></script>
+  <script src="sidepanel-thispage.js"></script>
 </body>
 </html>

@@ -5,14 +5,14 @@
   "version": "1.0.0",
   "description": "NotespaceHub browser extension",
   "permissions": ["identity", "storage", "contextMenus", "notifications", "scripting", "sidePanel"],
-  "host_permissions": ["https://notespacehub.com/*", "http://127.0.0.0:4173/*", "http://localhost:4173/*", "http://localhost:3000/*", "http://localhost:1111/*", "https://www.linkedin.com/*"],
+  "host_permissions": ["https://notespacehub.com/*", "http://127.0.0.0:4173/*", "http://localhost:4173/*", "http://localhost:3000/*", "http://localhost:1111/*", "https://linkedin.com/*", "https://www.linkedin.com/*", "https://glints.com/*"],
   "background": { "service_worker": "background.js" },
   "side_panel": { "default_path": "sidepanel.html" },
   "content_scripts": [
     {
-      "matches": ["https://www.linkedin.com/jobs/*"],
-      "js": ["content-linkedin.js"],
-      "css": ["content-linkedin.css"],
+      "matches": ["https://linkedin.com/*", "https://www.linkedin.com/*", "https://glints.com/*"],
+      "js": ["job-sites.js", "job-extract.js", "content-jobs.js"],
+      "css": ["content-jobs.css"],
       "run_at": "document_idle"
     }
   ],
